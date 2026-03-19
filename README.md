@@ -80,7 +80,7 @@ bash deploy.sh
       "settings": {
         "clients": [],
         "decryption": "none",
-        "fallbacks": [{ "dest": "8080", "xver": 0 }]
+        "fallbacks": [{ "dest": 8080, "xver": 0 }]
       },
       "sniffing": {
         "enabled": true,
@@ -118,10 +118,16 @@ bash deploy.sh
 ### 3. Генерация ключей REALITY
 
 ```bash
+# Генерация privateKey и publicKey:
 docker exec remnanode /usr/local/bin/xray x25519
+
+# Генерация shortId (8 символов hex):
+openssl rand -hex 4
 ```
 
-Вставьте `Private key` в `privateKey`, а `Public key` будет нужен клиенту.
+- `Private key` → в `privateKey` конфига
+- `Public key` → панель Remnawave подставит автоматически в подписку
+- `shortId` → в массив `shortIds`
 
 ## Проверки
 
