@@ -41,7 +41,7 @@ cp config.yaml.example config.yaml
 ```yaml
 sni_donor: "www.microsoft.com"   # сайт для маскировки (не менять без причины)
 fallback_port: 8080               # порт nginx fallback — только localhost, снаружи закрыт
-node_api_port: 2222               # порт Remnawave Node API на ноде
+node_api_port: 3000               # порт Remnawave Node API на ноде
 panel_ip: "1.2.3.4"              # IP твоей панели Remnawave (порт API будет открыт только отсюда)
 
 nodes:

@@ -9,7 +9,7 @@ sni_donor: "www.microsoft.com"
 
 # Порты на ноде
 fallback_port: 8080    # nginx fallback — только localhost, снаружи закрыт
-node_api_port: 2222    # Remnawave Node API
+node_api_port: 3000    # Remnawave Node API
 
 # IP панели Remnawave — порт node_api_port открыт ТОЛЬКО с этого адреса
 # Оставь "" чтобы не ограничивать (не рекомендуется)
