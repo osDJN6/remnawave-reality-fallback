@@ -94,7 +94,7 @@ def upload_file(client, local_path, remote_path):
 
 
 def gen_keys_xray(client):
-    code, out = ssh_run(client, "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null")
+    code, out = ssh_run(client, "docker exec remnanode xray x25519 2>/dev/null || docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null")
     if code == 0 and "Private key:" in out:
         priv = next((l.split()[-1] for l in out.splitlines() if "Private key:" in l), "")
         pub  = next((l.split()[-1] for l in out.splitlines() if "Public key:"  in l), "")
@@ -288,7 +288,7 @@ def main():
           "serverNames": ["{SNI_DONOR}"],
           "privateKey": "{priv_key}",
           "shortIds": ["{short_id}"],
-          "fingerprint": "chrome"
+          "fingerprint": "firefox"
         }}
       }}
     }}
@@ -329,7 +329,7 @@ def main():
     print(f"  port      = 443")
     print(f"  security  = tls")
     print(f"  sni       = {G}{SNI_DONOR}{NC}")
-    print(f"  fp        = chrome")
+    print(f"  fp        = firefox")
     print(f"  publicKey = {G}{pub_key}{NC}")
     print(f"  shortId   = {G}{short_id}{NC}")
     print(f"\n{C}{line}{NC}")

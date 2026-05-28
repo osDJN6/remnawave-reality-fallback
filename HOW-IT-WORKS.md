@@ -48,7 +48,7 @@ REALITY делает иначе. Вместо своего сертификат�
 
 1. Подключается на 443
 2. Получает **настоящий сертификат Microsoft** (DigiCert, валидный, проверяемый)
-3. TLS fingerprint — **chrome** (Xray имитирует браузер)
+3. TLS fingerprint — **firefox** (Xray имитирует браузер)
 4. Делает HTTP-запрос — получает **реальную страницу Microsoft**
 
 Для системы блокировки это выглядит как обычный веб-сервер Microsoft. Блокировать такой сервер — значит блокировать Microsoft целиком.
@@ -82,7 +82,7 @@ nginx на `127.0.0.1:8080` — обратный прокси на `www.microsof
 |---------------------|-----------|
 | IP-адрес | Обычный сервер, не в списке блокировок |
 | TLS-сертификат | Microsoft (DigiCert, валидный) |
-| TLS fingerprint | Chrome браузер |
+| TLS fingerprint | Firefox браузер |
 | Активный зонд (HTTP) | Реальная страница Microsoft |
 | Паттерн трафика | Не отличим от HTTPS |
 
@@ -97,7 +97,7 @@ nginx на `127.0.0.1:8080` — обратный прокси на `www.microsof
 | Fallback порт | 8080 (только localhost) |
 | Node API порт | 2222 |
 | SNI донор | www.microsoft.com |
-| TLS fingerprint | chrome |
+| TLS fingerprint | firefox |
 
 ---
 

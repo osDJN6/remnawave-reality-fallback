@@ -127,7 +127,7 @@ if [[ -n "$FIRST_OK_NODE" ]]; then
 
     # Пробуем через docker exec remnanode (если нода уже установлена)
     XRAY_OUT=$(SSHPASS="$F_PASS" sshpass -e ssh $SSH_OPTS "$F_USER@$F_IP" \
-        "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null" 2>/dev/null || true)
+        "docker exec remnanode xray x25519 2>/dev/null || docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null" 2>/dev/null || true)
 
     if echo "$XRAY_OUT" | grep -q "Private key:"; then
         PRIVATE_KEY=$(echo "$XRAY_OUT" | grep "Private key:" | awk '{print $NF}')
@@ -224,7 +224,7 @@ cat <<JSON_EOF
           "serverNames": ["${SNI_DONOR}"],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"],
-          "fingerprint": "chrome"
+          "fingerprint": "firefox"
         }
       }
     }
@@ -268,7 +268,7 @@ echo -e "  address   = IP ноды"
 echo -e "  port      = 443"
 echo -e "  security  = tls"
 echo -e "  sni       = ${GREEN}$SNI_DONOR${NC}"
-echo -e "  fp        = chrome"
+echo -e "  fp        = firefox"
 echo -e "  publicKey = ${GREEN}$PUBLIC_KEY${NC}"
 echo -e "  shortId   = ${GREEN}$SHORT_ID${NC}"
 echo ""
