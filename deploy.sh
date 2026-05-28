@@ -83,14 +83,26 @@ server {
     }
 }
 
-# Публичный HTTP (порт 80) — редирект на SNI-донор
+# Публичный HTTP (порт 80) — проксируем на SNI-донор
+# Цензор видит настоящие заголовки Microsoft, без следов nginx
 server {
     listen 80 default_server;
     server_name _;
     server_tokens off;
+    resolver 8.8.8.8 8.8.4.4 ipv6=off;
 
     location / {
-        return 301 https://${SNI_DONOR}\$request_uri;
+        proxy_pass http://${SNI_DONOR};
+        proxy_set_header Host ${SNI_DONOR};
+        proxy_set_header User-Agent \$http_user_agent;
+        proxy_set_header Accept \$http_accept;
+        proxy_set_header Accept-Language \$http_accept_language;
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Via;
+        more_set_headers "Server: \$upstream_http_server";
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 15s;
+        proxy_send_timeout 10s;
     }
 }
 NGINX_EOF
