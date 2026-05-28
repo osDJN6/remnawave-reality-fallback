@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+deploy-all.py — Автодеплой REALITY Fallback (Windows / Mac / Linux)
+
+Требования:
+    pip install paramiko
+
+Использование:
+    1. Заполни NODES и настройки ниже
+    2. python deploy-all.py
+"""
+
+import os
+import sys
+import secrets
+
+try:
+    import paramiko
+except ImportError:
+    print("Ошибка: установи paramiko командой:  pip install paramiko")
+    sys.exit(1)
+
+# Устанавливаем UTF-8 для вывода (важно на Windows)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# ================================================================
+# КОНФИГУРАЦИЯ — заполни перед запуском
+# ================================================================
+
+SNI_DONOR     = "www.microsoft.com"
+FALLBACK_PORT = 8080
+NODE_API_PORT = 3010
+
+# Ноды: label, ip, user, password
+NODES = [
+    {"label": "node1", "ip": "95.85.226.153", "user": "root", "password": "jPaDOVw48d2y"},
+    # {"label": "node2", "ip": "1.2.3.4",       "user": "root", "password": "password"},
+    # {"label": "node3", "ip": "5.6.7.8",       "user": "root", "password": "password"},
+]
+
+# ================================================================
+
+R = "\033[0;31m"; G = "\033[0;32m"; Y = "\033[1;33m"
+C = "\033[0;36m"; NC = "\033[0m"
+
+def info(msg):  print(f"{G}[INFO]{NC} {msg}", flush=True)
+def warn(msg):  print(f"{Y}[WARN]{NC} {msg}", flush=True)
+def error(msg): print(f"{R}[ERROR]{NC} {msg}", flush=True)
+def step(msg):  print(f"\n{C}━━━ {msg} ━━━{NC}", flush=True)
+
+
+def ssh_connect(ip, user, password):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        ip, username=user, password=password,
+        timeout=15, allow_agent=False, look_for_keys=False
+    )
+    return client
+
+
+def ssh_run(client, cmd, stream=False):
+    """Выполнить команду. stream=True — выводить построчно в реальном времени."""
+    transport = client.get_transport()
+    channel = transport.open_session()
+
+    if stream:
+        channel.get_pty()
+
+    channel.exec_command(cmd)
+
+    out_lines = []
+    while True:
+        if channel.recv_ready():
+            chunk = channel.recv(4096).decode("utf-8", errors="replace")
+            for line in chunk.splitlines():
+                if stream:
+                    print(line, flush=True)
+                out_lines.append(line)
+        elif channel.exit_status_ready():
+            remaining = channel.recv(65536).decode("utf-8", errors="replace")
+            for line in remaining.splitlines():
+                if stream:
+                    print(line, flush=True)
+                out_lines.append(line)
+            break
+
+    exit_code = channel.recv_exit_status()
+    out = "\n".join(out_lines)
+    return exit_code, out
+
+
+def upload_file(client, local_path, remote_path):
+    sftp = client.open_sftp()
+    sftp.put(local_path, remote_path)
+    sftp.chmod(remote_path, 0o755)
+    sftp.close()
+
+
+def gen_keys_xray(client):
+    code, out = ssh_run(client, "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null")
+    if code == 0 and "Private key:" in out:
+        priv = next((l.split()[-1] for l in out.splitlines() if "Private key:" in l), "")
+        pub  = next((l.split()[-1] for l in out.splitlines() if "Public key:"  in l), "")
+        return priv, pub
+    return None, None
+
+
+def gen_keys_openssl(client):
+    cmd = (
+        "PRIV_PEM=$(openssl genpkey -algorithm X25519 2>/dev/null); "
+        "PRIV=$(echo \"$PRIV_PEM\" | openssl pkey -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\\n'); "
+        "PUB=$(echo \"$PRIV_PEM\"  | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\\n'); "
+        "echo \"PRIVATE_KEY=$PRIV\"; echo \"PUBLIC_KEY=$PUB\""
+    )
+    _, out = ssh_run(client, cmd)
+    priv = next((l.split("=", 1)[1] for l in out.splitlines() if l.startswith("PRIVATE_KEY=")), "").strip()
+    pub  = next((l.split("=", 1)[1] for l in out.splitlines() if l.startswith("PUBLIC_KEY=")),  "").strip()
+    return priv, pub
+
+
+def main():
+    if not NODES:
+        error("Список NODES пустой — заполни конфигурацию в начале скрипта")
+        sys.exit(1)
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    deploy_sh  = os.path.join(script_dir, "deploy.sh")
+
+    if not os.path.isfile(deploy_sh):
+        error(f"deploy.sh не найден: {deploy_sh}")
+        sys.exit(1)
+
+    ok_nodes   = []
+    fail_nodes = []
+    key_client = None   # первая успешная нода — для генерации ключей
+
+    # ── Деплой на каждую ноду ────────────────────────────────
+    for node in NODES:
+        label = node["label"]
+        ip    = node["ip"]
+        user  = node["user"]
+        pwd   = node["password"]
+
+        step(f"Нода: {label} ({ip})")
+
+        client = None
+        try:
+            info(f"[{label}] Подключаюсь...")
+            client = ssh_connect(ip, user, pwd)
+            info(f"[{label}] Подключён — OK")
+
+            info(f"[{label}] Копирую deploy.sh...")
+            upload_file(client, deploy_sh, "/tmp/remnawave-deploy.sh")
+
+            info(f"[{label}] Запускаю деплой...")
+            env_cmd = (
+                f"SNI_DONOR='{SNI_DONOR}' "
+                f"FALLBACK_PORT='{FALLBACK_PORT}' "
+                f"NODE_API_PORT='{NODE_API_PORT}' "
+                f"bash /tmp/remnawave-deploy.sh"
+            )
+            code, _ = ssh_run(client, env_cmd, stream=True)
+
+            if code != 0:
+                error(f"[{label}] Деплой завершился с ошибкой (код {code})")
+                fail_nodes.append(f"  {R}✗{NC}  {label} ({ip}) — ошибка деплоя (код {code})")
+                client.close()
+                continue
+
+            info(f"[{label}] Деплой успешен")
+            ok_nodes.append(f"  {G}✓{NC}  {label} ({ip})")
+
+            if key_client is None:
+                key_client = client   # оставляем соединение для генерации ключей
+            else:
+                client.close()
+
+        except Exception as exc:
+            error(f"[{label}] Ошибка: {exc}")
+            fail_nodes.append(f"  {R}✗{NC}  {label} ({ip}) — {exc}")
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    # ── Генерация x25519 ключей ───────────────────────────────
+    step("Генерация x25519 ключей")
+
+    priv_key = pub_key = short_id = ""
+
+    if key_client:
+        try:
+            priv_key, pub_key = gen_keys_xray(key_client)
+            if priv_key:
+                info("Ключи получены через xray (remnanode)")
+            else:
+                warn("remnanode не запущен — генерирую через openssl")
+                priv_key, pub_key = gen_keys_openssl(key_client)
+                if priv_key:
+                    info("Ключи сгенерированы через openssl")
+
+            _, short_id = ssh_run(key_client, "openssl rand -hex 4")
+            short_id = short_id.strip()
+        except Exception as exc:
+            warn(f"Ошибка при генерации ключей: {exc}")
+        finally:
+            key_client.close()
+
+    if not priv_key:
+        warn("Сгенерируй ключи вручную: docker exec remnanode /usr/local/bin/xray x25519")
+        priv_key = "ВСТАВЬ_PRIVATE_KEY"
+        pub_key  = "ВСТАВЬ_PUBLIC_KEY"
+
+    if not short_id:
+        short_id = secrets.token_hex(4)
+
+    # ── Итог ─────────────────────────────────────────────────
+    line = "═" * 56
+    print(f"\n{C}{line}{NC}")
+    print(f"{G}  ИТОГ{NC}")
+    print(f"{C}{line}{NC}\n")
+    for ln in ok_nodes:
+        print(ln)
+    for ln in fail_nodes:
+        print(ln)
+
+    print(f"\n{C}{'═' * 18} Config Profile {'═' * 19}{NC}")
+    print(f"{Y}  Один профиль — для всех нод{NC}\n")
+    print(f"  privateKey: {G}{priv_key}{NC}")
+    print(f"  publicKey:  {G}{pub_key}{NC}")
+    print(f"  shortId:    {G}{short_id}{NC}")
+    print(f"  SNI:        {G}{SNI_DONOR}{NC}")
+    print(f"\n  Вставь JSON ниже: Xray config → Config Profiles → New\n")
+
+    print(f"""\
+{{
+  "inbounds": [
+    {{
+      "tag": "VLESS-REALITY",
+      "port": 443,
+      "listen": "",
+      "protocol": "vless",
+      "settings": {{
+        "clients": [],
+        "decryption": "none",
+        "fallbacks": [
+          {{ "dest": {FALLBACK_PORT}, "xver": 0 }}
+        ]
+      }},
+      "sniffing": {{
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      }},
+      "streamSettings": {{
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {{
+          "show": false,
+          "dest": "{SNI_DONOR}:443",
+          "xver": 0,
+          "serverNames": ["{SNI_DONOR}"],
+          "privateKey": "{priv_key}",
+          "shortIds": ["{short_id}"]
+        }}
+      }}
+    }}
+  ]
+}}""")
+
+    print(f"\n{C}{'═' * 18} Host настройки {'═' * 21}{NC}\n")
+    print(f"  address   = IP ноды")
+    print(f"  port      = 443")
+    print(f"  security  = tls")
+    print(f"  sni       = {G}{SNI_DONOR}{NC}")
+    print(f"  fp        = chrome")
+    print(f"  publicKey = {G}{pub_key}{NC}")
+    print(f"  shortId   = {G}{short_id}{NC}")
+    print(f"\n{C}{line}{NC}")
+
+
+if __name__ == "__main__":
+    main()
