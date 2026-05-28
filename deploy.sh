@@ -36,6 +36,7 @@ echo -e "  Node API порт: ${GREEN}$NODE_API_PORT${NC}"
 
 # ── Шаг 3: Установка пакетов ─────────────────────────────────
 log_step "Шаг 3: Пакеты"
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -y -q
 apt-get install -y -q nginx curl ufw
 log_info "Пакеты установлены"
@@ -53,6 +54,7 @@ server {
         proxy_pass https://${SNI_DONOR};
         proxy_ssl_server_name on;
         proxy_ssl_name ${SNI_DONOR};
+        proxy_ssl_verify off;
         proxy_set_header Host ${SNI_DONOR};
         proxy_set_header User-Agent \$http_user_agent;
         proxy_set_header Accept \$http_accept;

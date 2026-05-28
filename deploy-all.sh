@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Что делает:
 #   1. Деплоит nginx fallback на каждую ноду (через SSH)
-#   2. Генерирует x25519 ключи (один раз — для всех нод)
+#   2. Генерирует x25519 ключи один раз (для всех нод)
 #   3. Выводит готовый Config Profile JSON для панели Remnawave
 #
 # Использование:
@@ -57,7 +57,9 @@ fi
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=15 -o BatchMode=no"
 
-declare -A RESULTS
+# Результаты в строке (bash 3.2 совместимо — без declare -A)
+SUMMARY_OK=""
+SUMMARY_FAIL=""
 FIRST_OK_NODE=""
 
 # ================================================================
@@ -72,7 +74,7 @@ for node_config in "${NODES[@]}"; do
     log_info "[$LABEL] Копирую deploy.sh..."
     if ! sshpass -p "$PASS" scp $SSH_OPTS "$DEPLOY_SCRIPT" "$USER@$IP:/tmp/remnawave-deploy.sh" 2>&1; then
         log_error "[$LABEL] Не удалось скопировать скрипт"
-        RESULTS[$LABEL]="FAILED (scp)"
+        SUMMARY_FAIL="${SUMMARY_FAIL}  ${RED}✗${NC}  $LABEL ($IP) — ошибка SCP\n"
         continue
     fi
 
@@ -81,11 +83,11 @@ for node_config in "${NODES[@]}"; do
     if sshpass -p "$PASS" ssh $SSH_OPTS "$USER@$IP" \
         "SNI_DONOR='$SNI_DONOR' FALLBACK_PORT='$FALLBACK_PORT' NODE_API_PORT='$NODE_API_PORT' bash /tmp/remnawave-deploy.sh" 2>&1; then
         log_info "[$LABEL] Деплой успешен"
-        RESULTS[$LABEL]="OK"
+        SUMMARY_OK="${SUMMARY_OK}  ${GREEN}✓${NC}  $LABEL ($IP)\n"
         [[ -z "$FIRST_OK_NODE" ]] && FIRST_OK_NODE="$LABEL|$IP|$USER|$PASS"
     else
         log_error "[$LABEL] Деплой завершился с ошибкой"
-        RESULTS[$LABEL]="FAILED (deploy)"
+        SUMMARY_FAIL="${SUMMARY_FAIL}  ${RED}✗${NC}  $LABEL ($IP) — ошибка деплоя\n"
     fi
 done
 
@@ -103,7 +105,7 @@ if [[ -n "$FIRST_OK_NODE" ]]; then
 
     # Пробуем через docker exec remnanode (если нода уже установлена)
     XRAY_OUT=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" \
-        "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null" 2>/dev/null || echo "")
+        "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null" 2>/dev/null || true)
 
     if echo "$XRAY_OUT" | grep -q "Private key:"; then
         PRIVATE_KEY=$(echo "$XRAY_OUT" | grep "Private key:" | awk '{print $NF}')
@@ -112,29 +114,30 @@ if [[ -n "$FIRST_OK_NODE" ]]; then
     else
         # Remnawave Node ещё не установлен — генерируем через openssl
         log_warn "remnanode не запущен — генерируем через openssl"
-        KEYGEN_OUT=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" bash <<'KEYGEN'
+        KEYGEN_OUT=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" 'bash -s' <<'KEYGEN' 2>/dev/null || true
 PRIV_PEM=$(openssl genpkey -algorithm X25519 2>/dev/null)
-PRIVATE_KEY=$(echo "$PRIV_PEM" | openssl pkey -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
-PUBLIC_KEY=$(echo "$PRIV_PEM" | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
-echo "PRIVATE_KEY=$PRIVATE_KEY"
-echo "PUBLIC_KEY=$PUBLIC_KEY"
+PRIVATE=$(echo "$PRIV_PEM" | openssl pkey -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
+PUBLIC=$(echo "$PRIV_PEM" | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
+echo "PRIVATE_KEY=$PRIVATE"
+echo "PUBLIC_KEY=$PUBLIC"
 KEYGEN
-)
-        PRIVATE_KEY=$(echo "$KEYGEN_OUT" | grep "PRIVATE_KEY=" | cut -d= -f2)
-        PUBLIC_KEY=$(echo "$KEYGEN_OUT" | grep "PUBLIC_KEY=" | cut -d= -f2)
-        log_info "Ключи сгенерированы через openssl на $F_LABEL"
+        )
+        PRIVATE_KEY=$(echo "$KEYGEN_OUT" | grep "^PRIVATE_KEY=" | cut -d= -f2- | tr -d '[:space:]')
+        PUBLIC_KEY=$(echo "$KEYGEN_OUT" | grep "^PUBLIC_KEY=" | cut -d= -f2- | tr -d '[:space:]')
+        [[ -n "$PRIVATE_KEY" ]] && log_info "Ключи сгенерированы через openssl на $F_LABEL"
     fi
 
-    # Генерируем shortId
-    SHORT_ID=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" "openssl rand -hex 4" 2>/dev/null | tr -d '[:space:]')
+    SHORT_ID=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" "openssl rand -hex 4" 2>/dev/null | tr -d '[:space:]' || true)
 fi
 
+# Fallback если всё не сработало
 if [[ -z "$PRIVATE_KEY" ]]; then
     log_warn "Не удалось сгенерировать ключи автоматически"
-    PRIVATE_KEY="<СГЕНЕРИРУЙ: docker exec remnanode /usr/local/bin/xray x25519>"
-    PUBLIC_KEY="<ПУБЛИЧНЫЙ_КЛЮЧ>"
-    SHORT_ID="$(openssl rand -hex 4 2>/dev/null || echo 'aabbccdd')"
+    log_warn "После установки Remnawave Node выполни: docker exec remnanode /usr/local/bin/xray x25519"
+    PRIVATE_KEY="ВСТАВЬ_PRIVATE_KEY"
+    PUBLIC_KEY="ВСТАВЬ_PUBLIC_KEY"
 fi
+[[ -z "$SHORT_ID" ]] && SHORT_ID=$(openssl rand -hex 4 2>/dev/null || echo "aabbccdd")
 
 # ================================================================
 # Итоговый отчёт
@@ -144,27 +147,19 @@ echo -e "${CYAN}═════════════════════�
 echo -e "${GREEN}  ИТОГ${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
 echo ""
-
-for node_config in "${NODES[@]}"; do
-    IFS='|' read -r LABEL IP USER PASS <<< "$node_config"
-    STATUS="${RESULTS[$LABEL]:-SKIPPED}"
-    if [[ "$STATUS" == "OK" ]]; then
-        echo -e "  ${GREEN}✓${NC}  $LABEL ($IP) — ${GREEN}OK${NC}"
-    else
-        echo -e "  ${RED}✗${NC}  $LABEL ($IP) — ${RED}$STATUS${NC}"
-    fi
-done
+[[ -n "$SUMMARY_OK" ]]   && echo -e "$SUMMARY_OK"
+[[ -n "$SUMMARY_FAIL" ]] && echo -e "$SUMMARY_FAIL"
 
 echo ""
 echo -e "${CYAN}════ Config Profile для панели Remnawave ════${NC}"
 echo -e "${YELLOW}  Один профиль — для всех нод${NC}"
 echo ""
-echo -e "  privateKey:  ${GREEN}$PRIVATE_KEY${NC}"
-echo -e "  publicKey:   ${GREEN}$PUBLIC_KEY${NC}"
-echo -e "  shortId:     ${GREEN}$SHORT_ID${NC}"
-echo -e "  SNI:         ${GREEN}$SNI_DONOR${NC}"
+echo -e "  privateKey: ${GREEN}$PRIVATE_KEY${NC}"
+echo -e "  publicKey:  ${GREEN}$PUBLIC_KEY${NC}"
+echo -e "  shortId:    ${GREEN}$SHORT_ID${NC}"
+echo -e "  SNI:        ${GREEN}$SNI_DONOR${NC}"
 echo ""
-echo "  Вставь в панели: Xray config → Config Profiles → New"
+echo -e "  Вставь JSON ниже в панель: Xray config → Config Profiles → New"
 echo ""
 
 cat <<JSON_EOF
@@ -173,6 +168,7 @@ cat <<JSON_EOF
     {
       "tag": "VLESS-REALITY",
       "port": 443,
+      "listen": "",
       "protocol": "vless",
       "settings": {
         "clients": [],
@@ -181,11 +177,17 @@ cat <<JSON_EOF
           { "dest": $FALLBACK_PORT, "xver": 0 }
         ]
       },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"]
+      },
       "streamSettings": {
         "network": "raw",
         "security": "reality",
         "realitySettings": {
+          "show": false,
           "dest": "${SNI_DONOR}:443",
+          "xver": 0,
           "serverNames": ["${SNI_DONOR}"],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"]
@@ -197,14 +199,14 @@ cat <<JSON_EOF
 JSON_EOF
 
 echo ""
-echo -e "${CYAN}════ Следующие шаги ════${NC}"
+echo -e "${CYAN}════ Host настройки для каждой ноды ════${NC}"
 echo ""
-echo -e "  1. Скопируй JSON выше → панель Remnawave → Config Profiles"
-echo -e "  2. Создай Host для каждой ноды:"
-echo -e "     address = IP ноды, port = 443"
-echo -e "     security = tls, fingerprint = chrome"
-echo -e "     SNI = $SNI_DONOR"
-echo -e "     publicKey = $PUBLIC_KEY"
-echo -e "     shortId = $SHORT_ID"
+echo -e "  address   = IP ноды"
+echo -e "  port      = 443"
+echo -e "  security  = tls"
+echo -e "  sni       = ${GREEN}$SNI_DONOR${NC}"
+echo -e "  fp        = chrome"
+echo -e "  publicKey = ${GREEN}$PUBLIC_KEY${NC}"
+echo -e "  shortId   = ${GREEN}$SHORT_ID${NC}"
 echo ""
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
