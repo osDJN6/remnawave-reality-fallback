@@ -164,11 +164,21 @@ echo ""
 
 cat <<JSON_EOF
 {
+  "log": {
+    "loglevel": "none"
+  },
+  "dns": {
+    "servers": [
+      "https+local://8.8.8.8",
+      "https+local://1.1.1.1"
+    ],
+    "queryStrategy": "UseIPv4"
+  },
   "inbounds": [
     {
       "tag": "VLESS-REALITY",
       "port": 443,
-      "listen": "",
+      "listen": "0.0.0.0",
       "protocol": "vless",
       "settings": {
         "clients": [],
@@ -178,23 +188,54 @@ cat <<JSON_EOF
         ]
       },
       "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"]
+        "enabled": false,
+        "routeOnly": true,
+        "destOverride": ["http", "tls", "quic", "fakedns"]
       },
       "streamSettings": {
         "network": "raw",
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "${SNI_DONOR}:443",
           "xver": 0,
+          "target": "${SNI_DONOR}:443",
           "serverNames": ["${SNI_DONOR}"],
           "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"]
+          "shortIds": ["${SHORT_ID}"],
+          "fingerprint": "chrome"
         }
       }
     }
-  ]
+  ],
+  "outbounds": [
+    {
+      "tag": "DIRECT",
+      "protocol": "freedom"
+    },
+    {
+      "tag": "BLOCK",
+      "protocol": "blackhole"
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "BLOCK"
+      },
+      {
+        "ip": ["geoip:private"],
+        "type": "field",
+        "outboundTag": "BLOCK"
+      },
+      {
+        "type": "field",
+        "domain": ["geosite:private"],
+        "outboundTag": "BLOCK"
+      }
+    ]
+  }
 }
 JSON_EOF
 
