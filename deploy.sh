@@ -41,7 +41,7 @@ echo -e "  Node API порт: ${GREEN}$NODE_API_PORT${NC}"
 log_step "Шаг 3: Пакеты"
 export DEBIAN_FRONTEND=noninteractive
 timeout 300 apt-get update -y -q || { log_error "apt-get update завис или вернул ошибку"; exit 1; }
-apt-get install -y -q nginx curl ufw
+apt-get install -y -q nginx curl ufw libnginx-mod-http-headers-more-filter
 log_info "Пакеты установлены"
 
 # ── Шаг 4: Конфиг nginx ──────────────────────────────────────
@@ -82,6 +82,7 @@ server {
     server_tokens off;
 
     location / {
+        more_set_headers "Server: ";
         return 301 https://${SNI_DONOR}\$request_uri;
     }
 }
