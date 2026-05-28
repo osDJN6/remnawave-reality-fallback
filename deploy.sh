@@ -48,8 +48,9 @@ log_info "Пакеты установлены"
 log_step "Шаг 4: nginx"
 
 cat > /etc/nginx/sites-available/remnawave-fallback <<NGINX_EOF
+# Fallback для REALITY — любой запрос проксируется на SNI-донор
 server {
-    listen 127.0.0.1:${FALLBACK_PORT};
+    listen 127.0.0.1:${FALLBACK_PORT} default_server;
     server_name _;
     server_tokens off;
 
