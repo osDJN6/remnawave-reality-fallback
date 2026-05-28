@@ -48,7 +48,7 @@ log_info "Пакеты установлены"
 log_step "Шаг 4: nginx"
 
 cat > /etc/nginx/sites-available/remnawave-fallback <<NGINX_EOF
-# Fallback для REALITY — любой запрос проксируется на SNI-донор
+# Xray REALITY fallback — HTTPS (любой SNI через localhost)
 server {
     listen 127.0.0.1:${FALLBACK_PORT} default_server;
     server_name _;
@@ -74,6 +74,17 @@ server {
         proxy_send_timeout 30s;
     }
 }
+
+# Публичный HTTP (порт 80) — редирект на SNI-донор
+server {
+    listen 80 default_server;
+    server_name _;
+    server_tokens off;
+
+    location / {
+        return 301 https://${SNI_DONOR}\$request_uri;
+    }
+}
 NGINX_EOF
 
 ln -sf /etc/nginx/sites-available/remnawave-fallback /etc/nginx/sites-enabled/remnawave-fallback
@@ -87,10 +98,11 @@ if command -v ufw &>/dev/null; then
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow 22/tcp comment "SSH"
+    ufw allow 80/tcp comment "HTTP fallback"
     ufw allow 443/tcp comment "Xray VLESS+REALITY"
     ufw allow "$NODE_API_PORT"/tcp comment "Remnawave Node API"
     ufw --force enable
-    log_info "UFW: 22, 443, $NODE_API_PORT"
+    log_info "UFW: 22, 80, 443, $NODE_API_PORT"
 else
     log_warn "ufw не найден — настройте firewall вручную"
 fi
