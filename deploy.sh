@@ -59,6 +59,7 @@ server {
     listen 127.0.0.1:${FALLBACK_PORT} default_server;
     server_name _;
     server_tokens off;
+    resolver 8.8.8.8 8.8.4.4 ipv6=off;
 
     location / {
         proxy_pass https://${SNI_DONOR};
