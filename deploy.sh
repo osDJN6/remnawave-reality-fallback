@@ -90,7 +90,6 @@ server {
     server_tokens off;
 
     location / {
-        more_set_headers "Server: ";
         return 301 https://${SNI_DONOR}\$request_uri;
     }
 }
