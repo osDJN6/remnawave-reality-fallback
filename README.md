@@ -107,7 +107,7 @@ bash deploy-all.sh
    - `port` = 443
    - `security` = tls
    - `sni` = www.microsoft.com
-   - `fp` = chrome
+   - `fp` = firefox
    - `publicKey` и `shortId` из вывода скрипта
 3. Привяжи все ноды к одному профилю
 
