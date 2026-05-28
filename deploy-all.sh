@@ -72,7 +72,7 @@ for node_config in "${NODES[@]}"; do
 
     # Копируем deploy.sh на ноду
     log_info "[$LABEL] Копирую deploy.sh..."
-    if ! sshpass -p "$PASS" scp $SSH_OPTS "$DEPLOY_SCRIPT" "$USER@$IP:/tmp/remnawave-deploy.sh" 2>&1; then
+    if ! SSHPASS="$PASS" sshpass -e scp $SSH_OPTS "$DEPLOY_SCRIPT" "$USER@$IP:/tmp/remnawave-deploy.sh" 2>&1; then
         log_error "[$LABEL] Не удалось скопировать скрипт"
         SUMMARY_FAIL="${SUMMARY_FAIL}  ${RED}✗${NC}  $LABEL ($IP) — ошибка SCP\n"
         continue
@@ -80,7 +80,7 @@ for node_config in "${NODES[@]}"; do
 
     # Запускаем deploy.sh с параметрами через env
     log_info "[$LABEL] Запускаю деплой nginx..."
-    if sshpass -p "$PASS" ssh $SSH_OPTS "$USER@$IP" \
+    if SSHPASS="$PASS" sshpass -e ssh $SSH_OPTS "$USER@$IP" \
         "SNI_DONOR='$SNI_DONOR' FALLBACK_PORT='$FALLBACK_PORT' NODE_API_PORT='$NODE_API_PORT' bash /tmp/remnawave-deploy.sh" 2>&1; then
         log_info "[$LABEL] Деплой успешен"
         SUMMARY_OK="${SUMMARY_OK}  ${GREEN}✓${NC}  $LABEL ($IP)\n"
@@ -104,7 +104,7 @@ if [[ -n "$FIRST_OK_NODE" ]]; then
     IFS='|' read -r F_LABEL F_IP F_USER F_PASS <<< "$FIRST_OK_NODE"
 
     # Пробуем через docker exec remnanode (если нода уже установлена)
-    XRAY_OUT=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" \
+    XRAY_OUT=$(SSHPASS="$F_PASS" sshpass -e ssh $SSH_OPTS "$F_USER@$F_IP" \
         "docker exec remnanode /usr/local/bin/xray x25519 2>/dev/null" 2>/dev/null || true)
 
     if echo "$XRAY_OUT" | grep -q "Private key:"; then
@@ -114,7 +114,7 @@ if [[ -n "$FIRST_OK_NODE" ]]; then
     else
         # Remnawave Node ещё не установлен — генерируем через openssl
         log_warn "remnanode не запущен — генерируем через openssl"
-        KEYGEN_OUT=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" 'bash -s' <<'KEYGEN' 2>/dev/null || true
+        KEYGEN_OUT=$(SSHPASS="$F_PASS" sshpass -e ssh $SSH_OPTS "$F_USER@$F_IP" 'bash -s' <<'KEYGEN' 2>/dev/null || true
 PRIV_PEM=$(openssl genpkey -algorithm X25519 2>/dev/null)
 PRIVATE=$(echo "$PRIV_PEM" | openssl pkey -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
 PUBLIC=$(echo "$PRIV_PEM" | openssl pkey -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n')
@@ -127,7 +127,7 @@ KEYGEN
         [[ -n "$PRIVATE_KEY" ]] && log_info "Ключи сгенерированы через openssl на $F_LABEL"
     fi
 
-    SHORT_ID=$(sshpass -p "$F_PASS" ssh $SSH_OPTS "$F_USER@$F_IP" "openssl rand -hex 4" 2>/dev/null | tr -d '[:space:]' || true)
+    SHORT_ID=$(SSHPASS="$F_PASS" sshpass -e ssh $SSH_OPTS "$F_USER@$F_IP" "openssl rand -hex 4" 2>/dev/null | tr -d '[:space:]' || true)
 fi
 
 # Fallback если всё не сработало

@@ -18,9 +18,11 @@ log_step "Шаг 1: Проверки системы"
 log_info "root — OK"
 
 [[ -f /etc/os-release ]] && . /etc/os-release || { log_error "Не удалось определить ОС"; exit 1; }
-case "${ID}-${VERSION_ID}" in
-    ubuntu-22.04|ubuntu-24.04|debian-11|debian-12) log_info "ОС: $ID $VERSION_ID — OK" ;;
-    *) log_error "Неподдерживаемая ОС: $ID $VERSION_ID"; exit 1 ;;
+OS_ID="${ID:-unknown}"
+OS_VER="${VERSION_ID:-unknown}"
+case "${OS_ID}-${OS_VER}" in
+    ubuntu-22.04|ubuntu-24.04|debian-11|debian-12) log_info "ОС: $OS_ID $OS_VER — OK" ;;
+    *) log_error "Неподдерживаемая ОС: $OS_ID $OS_VER"; exit 1 ;;
 esac
 
 # ── Шаг 2: Параметры ─────────────────────────────────────────
@@ -95,7 +97,12 @@ fi
 log_step "Шаг 6: Запуск"
 systemctl restart nginx
 systemctl enable nginx
-systemctl is-active --quiet nginx && log_info "nginx работает" || { log_error "nginx не запустился"; exit 1; }
+if systemctl is-active --quiet nginx; then
+    log_info "nginx работает"
+else
+    log_error "nginx не запустился"
+    exit 1
+fi
 
 # ── Шаг 7: Проверка ──────────────────────────────────────────
 log_step "Шаг 7: Проверка"

@@ -25,6 +25,14 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+# Включаем ANSI цвета на Windows (cmd.exe / PowerShell)
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleMode(ctypes.windll.kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+
 # ================================================================
 # КОНФИГУРАЦИЯ — заполни перед запуском
 # ================================================================
@@ -63,33 +71,19 @@ def ssh_connect(ip, user, password):
 
 def ssh_run(client, cmd, stream=False):
     """Выполнить команду. stream=True — выводить построчно в реальном времени."""
-    transport = client.get_transport()
-    channel = transport.open_session()
-
-    if stream:
-        channel.get_pty()
-
-    channel.exec_command(cmd)
+    stdin, stdout, stderr = client.exec_command(cmd, get_pty=stream)
 
     out_lines = []
-    while True:
-        if channel.recv_ready():
-            chunk = channel.recv(4096).decode("utf-8", errors="replace")
-            for line in chunk.splitlines():
-                if stream:
-                    print(line, flush=True)
-                out_lines.append(line)
-        elif channel.exit_status_ready():
-            remaining = channel.recv(65536).decode("utf-8", errors="replace")
-            for line in remaining.splitlines():
-                if stream:
-                    print(line, flush=True)
-                out_lines.append(line)
-            break
+    if stream:
+        for raw_line in stdout:
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            print(line, flush=True)
+            out_lines.append(line)
+    else:
+        out_lines = stdout.read().decode("utf-8", errors="replace").splitlines()
 
-    exit_code = channel.recv_exit_status()
-    out = "\n".join(out_lines)
-    return exit_code, out
+    exit_code = stdout.channel.recv_exit_status()
+    return exit_code, "\n".join(out_lines)
 
 
 def upload_file(client, local_path, remote_path):

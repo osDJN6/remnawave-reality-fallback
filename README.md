@@ -17,52 +17,117 @@ REALITY «одалживает» TLS-сертификат Microsoft — ценз
 | L3 (активное зондирование) | Настоящая страница Microsoft (200 OK) |
 | L4 (TLS-анализ) | Валидный сертификат + TLS fingerprint Microsoft |
 
-## Быстрый старт
+---
 
-**1. Установи зависимость (Mac):**
+## Вариант 1 — Python (Windows / Mac / Linux)
+
+### Установка
+
 ```bash
-brew install sshpass
+pip install paramiko
 ```
 
-**2. Заполни ноды в `deploy-all.sh`:**
+### Настройка
+
+Открой `deploy-all.py` и заполни секцию конфигурации:
+
+```python
+SNI_DONOR     = "www.microsoft.com"   # сайт для маскировки
+FALLBACK_PORT = 8080                  # порт nginx fallback
+NODE_API_PORT = 3010                  # порт Remnawave Node API
+
+NODES = [
+    {"label": "node1", "ip": "1.2.3.4", "user": "root", "password": "password"},
+    {"label": "node2", "ip": "5.6.7.8", "user": "root", "password": "password"},
+]
+```
+
+### Запуск
+
 ```bash
+python deploy-all.py
+```
+
+На Windows:
+```
+python deploy-all.py
+```
+
+---
+
+## Вариант 2 — Bash (Mac / Linux)
+
+### Установка
+
+```bash
+brew install sshpass        # Mac
+apt-get install sshpass     # Linux
+```
+
+### Настройка
+
+Открой `deploy-all.sh` и заполни секцию конфигурации:
+
+```bash
+SNI_DONOR="www.microsoft.com"
+FALLBACK_PORT="8080"
+NODE_API_PORT="3010"
+
 NODES=(
     "node1|1.2.3.4|root|password"
     "node2|5.6.7.8|root|password"
 )
 ```
 
-**3. Запусти:**
+### Запуск
+
 ```bash
 bash deploy-all.sh
 ```
 
-**4. Скрипт автоматически:**
-- Деплоит nginx fallback на каждую ноду
-- Генерирует x25519 ключи (один раз — подходят для всех нод)
-- Выводит готовый **Config Profile JSON** для вставки в панель Remnawave
+---
 
-**5. В панели Remnawave:**
-- Вставь полученный JSON → Config Profiles → New
-- Создай Host для каждой ноды (IP + publicKey + shortId из вывода скрипта)
-- Привяжи все ноды к одному профилю
+## Что происходит после запуска
 
-## Один Config Profile — все ноды
+Оба скрипта выполняют одинаковые шаги:
 
-Один и тот же JSON применяется ко всем нодам. Панель Remnawave сама пушит конфиг на каждую ноду.
+1. **Деплоит nginx** на каждую ноду через SSH
+2. **Генерирует x25519 ключи** — один раз, подходят для всех нод
+3. **Выводит готовый Config Profile JSON** и Host настройки
+
+---
+
+## В панели Remnawave
+
+1. **Config Profiles → New** — вставь полученный JSON
+2. **Hosts → New** — для каждой ноды:
+   - `address` = IP ноды
+   - `port` = 443
+   - `security` = tls
+   - `sni` = www.microsoft.com
+   - `fp` = chrome
+   - `publicKey` и `shortId` из вывода скрипта
+3. Привяжи все ноды к одному профилю
+
+---
 
 ## Файлы
 
 | Файл | Назначение |
 |------|-----------|
-| `deploy-all.sh` | Мастер-скрипт: деплой на все ноды + генерация ключей + вывод JSON |
-| `deploy.sh` | Устанавливает nginx на одной ноде (вызывается автоматически) |
+| `deploy-all.py` | Мастер-скрипт для Windows / Mac / Linux (Python) |
+| `deploy-all.sh` | Мастер-скрипт для Mac / Linux (Bash) |
+| `deploy.sh` | Устанавливает nginx на ноде — вызывается автоматически |
 
-## Требования
+---
 
-- Ubuntu 22.04/24.04 или Debian 11/12 на нодах
-- `sshpass` на локальной машине: `brew install sshpass`
-- SSH root-доступ к нодам
+## Требования к нодам
+
+- Ubuntu 22.04 / 24.04 или Debian 11 / 12
+- SSH root-доступ
+- Порт 443 свободен
+
+---
 
 ## Рекомендуемые SNI-доноры
 
@@ -70,18 +135,21 @@ bash deploy-all.sh
 |-------|-----------|
 | `www.microsoft.com` | ✅ Глобальный CDN, работает везде |
 | `github.com` | ✅ Надёжно |
-| Apple-домены | ❌ Собственный ASN — несоответствие IP детектируется |
+| Apple-домены | ❌ Собственный ASN — IP несоответствие видно сразу |
+
+---
 
 ## Генерация ключей вручную
 
-Если нужно перегенерировать ключи:
 ```bash
-# На ноде с установленным Remnawave Node:
+# Приватный и публичный ключ (на ноде с Remnawave Node):
 docker exec remnanode /usr/local/bin/xray x25519
 
 # shortId:
 openssl rand -hex 4
 ```
+
+---
 
 ## Проверка после деплоя
 
