@@ -88,16 +88,53 @@ nginx на `127.0.0.1:8080` — обратный прокси на `www.microsof
 
 ---
 
-## Конфигурация нашей ноды
+---
 
-| Параметр | Значение |
-|----------|----------|
-| IP ноды | 89.125.33.47 |
-| VLESS+REALITY порт | 443 |
-| Fallback порт | 8080 (только localhost) |
-| Node API порт | 2222 |
-| SNI донор | www.microsoft.com |
-| TLS fingerprint | firefox |
+## Дополнительные меры — что ещё может выдать сервер
+
+Базовая маскировка закрывает активное зондирование на 443. Но есть другие способы обнаружить VPN-ноду, которые не связаны с трафиком напрямую.
+
+### Порт 2222 — API управляющей панели
+
+Remnawave Node API слушает на нестандартном порту. Автоматические сканеры (типа Shodan, Censys, государственные) обходят весь интернет и записывают что открыто на каждом IP. Если порт 2222 отвечает — это сразу признак управляемой VPN-ноды.
+
+Решение: UFW разрешает подключение к порту 2222 **только с IP панели управления**. Снаружи порт выглядит закрытым — сканер не получает ответа.
+
+```
+ufw allow from PANEL_IP to any port 2222 proto tcp
+```
+
+### Server: nginx — заголовок fallback-прокси
+
+nginx по умолчанию добавляет свой заголовок `Server: nginx` ко всем ответам — даже к проксированным. Зондировщик, делающий HTTP-запрос на порт 8080 (через Xray fallback), видел бы `Server: nginx` вместо реального заголовка Microsoft.
+
+Настоящий Microsoft CDN отвечает `Server: AkamaiGHost`. Именно это мы и должны отдавать — иначе несоответствие выдаёт прокси.
+
+Решение: директива `more_set_headers` перезаписывает заголовок реальным значением от upstream:
+
+```nginx
+more_set_headers "Server: $upstream_http_server";
+```
+
+Теперь зондировщик видит `Server: AkamaiGHost` — точно как при подключении к настоящему Microsoft.
+
+### SSH баннер — версия ОС
+
+OpenSSH по умолчанию раскрывает версию ОС в приветствии при подключении: `SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10`. Любой сканер может определить дистрибутив и версию ОС по этой строке. Это не критично само по себе, но убирает лишнюю информацию.
+
+Решение: `DebianBanner no` в `sshd_config` — убирает упоминание Ubuntu/Debian из баннера, остаётся только `SSH-2.0-OpenSSH_X.X`.
+
+### Итоговая картина после всех улучшений
+
+| Что проверяет сканер | Что видит |
+|---------------------|-----------|
+| Порт 443 — TLS сертификат | Microsoft (DigiCert, валидный) |
+| Порт 443 — TLS fingerprint | Firefox браузер |
+| Порт 443 / 80 — HTTP ответ | Реальная страница Microsoft |
+| Заголовок Server на HTTP | AkamaiGHost (Microsoft CDN) |
+| Порт 8080 снаружи | Закрыт (только localhost) |
+| Порт 2222 снаружи | Закрыт (только IP панели) |
+| SSH баннер | Версия ОС скрыта |
 
 ---
 
@@ -114,8 +151,8 @@ nginx на `127.0.0.1:8080` — обратный прокси на `www.microsof
 curl -s http://127.0.0.1:8080/ | head -20
 
 # Со своего компьютера — имитируем зондировщика
-curl -sk --resolve www.microsoft.com:443:89.125.33.47 https://www.microsoft.com/ | head -20
+curl -sk --resolve www.microsoft.com:443:YOUR_NODE_IP https://www.microsoft.com/ | head -20
 
 # Проверяем сертификат
-echo | openssl s_client -connect 89.125.33.47:443 -servername www.microsoft.com 2>/dev/null | openssl x509 -noout -subject -issuer
+echo | openssl s_client -connect YOUR_NODE_IP:443 -servername www.microsoft.com 2>/dev/null | openssl x509 -noout -subject -issuer
 ```

@@ -42,10 +42,14 @@ SNI_DONOR     = "www.microsoft.com"
 FALLBACK_PORT = 8080
 NODE_API_PORT = 2222
 
+# IP панели Remnawave — порт Node API будет открыт ТОЛЬКО с этого IP
+# Оставь "" чтобы не ограничивать (не рекомендуется)
+PANEL_IP      = "1.2.3.4"
+
 # Ноды: label, ip, user, password
 NODES = [
-    {"label": "node2", "ip": "89.125.33.47", "user": "root", "password": "a45TOVy0DWJP"},
-    # {"label": "node3", "ip": "5.6.7.8",       "user": "root", "password": "password"},
+    {"label": "node1", "ip": "1.2.3.4", "user": "root", "password": "YOUR_PASSWORD"},
+    # {"label": "node2", "ip": "5.6.7.8", "user": "root", "password": "YOUR_PASSWORD"},
 ]
 
 # ================================================================
@@ -172,6 +176,7 @@ def main():
                 f"SNI_DONOR='{SNI_DONOR}' "
                 f"FALLBACK_PORT='{FALLBACK_PORT}' "
                 f"NODE_API_PORT='{NODE_API_PORT}' "
+                f"PANEL_IP='{PANEL_IP}' "
                 f"bash /tmp/remnawave-deploy.sh"
             )
             code, _ = ssh_run(client, env_cmd, stream=True)

@@ -27,10 +27,14 @@ FALLBACK_PORT="8080"
 # Порт Remnawave Node API
 NODE_API_PORT="2222"
 
+# IP панели Remnawave — порт Node API будет открыт ТОЛЬКО с этого IP
+# Оставь пустым ("") чтобы не ограничивать (не рекомендуется)
+PANEL_IP="1.2.3.4"
+
 # Ноды: "метка|IP|пользователь|пароль"
 NODES=(
-    "node2|89.125.33.47|root|a45TOVy0DWJP"
-    # "node3|5.6.7.8|root|password"
+    "node1|1.2.3.4|root|YOUR_PASSWORD"
+    # "node2|5.6.7.8|root|YOUR_PASSWORD"
 )
 
 # ================================================================
@@ -103,7 +107,7 @@ for node_config in "${NODES[@]}"; do
     # Запускаем deploy.sh с параметрами через env
     log_info "[$LABEL] Запускаю деплой nginx..."
     if SSHPASS="$PASS" sshpass -e ssh $SSH_OPTS "$USER@$IP" \
-        "SNI_DONOR='$SNI_DONOR' FALLBACK_PORT='$FALLBACK_PORT' NODE_API_PORT='$NODE_API_PORT' bash /tmp/remnawave-deploy.sh" 2>&1; then
+        "SNI_DONOR='$SNI_DONOR' FALLBACK_PORT='$FALLBACK_PORT' NODE_API_PORT='$NODE_API_PORT' PANEL_IP='$PANEL_IP' bash /tmp/remnawave-deploy.sh" 2>&1; then
         log_info "[$LABEL] Деплой успешен"
         SUMMARY_OK="${SUMMARY_OK}  ${GREEN}✓${NC}  $LABEL ($IP)\n"
         [[ -z "$FIRST_OK_NODE" ]] && FIRST_OK_NODE="$LABEL|$IP|$USER|$PASS"

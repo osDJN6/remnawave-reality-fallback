@@ -32,10 +32,16 @@ log_step "Шаг 2: Параметры"
 SNI_DONOR="${SNI_DONOR:-www.microsoft.com}"
 FALLBACK_PORT="${FALLBACK_PORT:-8080}"
 NODE_API_PORT="${NODE_API_PORT:-3010}"
+PANEL_IP="${PANEL_IP:-}"
 
 echo -e "  SNI-донор:     ${GREEN}$SNI_DONOR${NC}"
 echo -e "  Fallback порт: ${GREEN}$FALLBACK_PORT${NC}"
 echo -e "  Node API порт: ${GREEN}$NODE_API_PORT${NC}"
+if [[ -n "$PANEL_IP" ]]; then
+    echo -e "  Panel IP:      ${GREEN}$PANEL_IP${NC} (Node API только с этого IP)"
+else
+    echo -e "  Panel IP:      ${YELLOW}не задан — Node API открыт для всех${NC}"
+fi
 
 # ── Шаг 3: Установка пакетов ─────────────────────────────────
 log_step "Шаг 3: Пакеты"
@@ -69,6 +75,7 @@ server {
         proxy_hide_header Via;
         proxy_hide_header X-MSEdge-Ref;
         proxy_hide_header X-Azure-Ref;
+        more_set_headers "Server: \$upstream_http_server";
         proxy_connect_timeout 10s;
         proxy_read_timeout 30s;
         proxy_send_timeout 30s;
@@ -101,12 +108,34 @@ if command -v ufw &>/dev/null; then
     ufw allow 22/tcp comment "SSH"
     ufw allow 80/tcp comment "HTTP fallback"
     ufw allow 443/tcp comment "Xray VLESS+REALITY"
-    ufw allow "$NODE_API_PORT"/tcp comment "Remnawave Node API"
+    # Node API — только с IP панели если задан, иначе открыт для всех
+    ufw delete allow "$NODE_API_PORT"/tcp 2>/dev/null || true
+    if [[ -n "$PANEL_IP" ]]; then
+        ufw allow from "$PANEL_IP" to any port "$NODE_API_PORT" proto tcp comment "Remnawave Node API (panel only)"
+        log_info "UFW: Node API порт $NODE_API_PORT — только $PANEL_IP"
+    else
+        ufw allow "$NODE_API_PORT"/tcp comment "Remnawave Node API"
+        log_info "UFW: Node API порт $NODE_API_PORT — открыт для всех"
+    fi
     ufw --force enable
-    log_info "UFW: 22, 80, 443, $NODE_API_PORT"
+    log_info "UFW: 22, 80, 443 открыты"
 else
     log_warn "ufw не найден — настройте firewall вручную"
 fi
+
+# ── Шаг 5.1: SSH hardening ───────────────────────────────────
+log_step "Шаг 5.1: SSH hardening"
+SSHD_CONF="/etc/ssh/sshd_config"
+# Скрываем версию OpenSSH в баннере
+if grep -q "^DebianBanner" "$SSHD_CONF" 2>/dev/null; then
+    sed -i 's/^DebianBanner.*/DebianBanner no/' "$SSHD_CONF"
+else
+    echo "DebianBanner no" >> "$SSHD_CONF"
+fi
+# Убираем баннер-файл если есть
+sed -i 's/^Banner .*/Banner none/' "$SSHD_CONF"
+systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+log_info "SSH: версия ОС в баннере скрыта"
 
 # ── Шаг 6: Запуск nginx ──────────────────────────────────────
 log_step "Шаг 6: Запуск"
