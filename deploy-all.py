@@ -58,6 +58,11 @@ NODE_API_PORT = int(_cfg.get("node_api_port", 2222))
 PANEL_IP      = str(_cfg.get("panel_ip", ""))
 NODES         = _cfg.get("nodes", [])
 
+_rk           = _cfg.get("reality_keys") or {}
+PRESET_PRIV   = str(_rk.get("private_key") or "").strip()
+PRESET_PUB    = str(_rk.get("public_key")  or "").strip()
+PRESET_SID    = str(_rk.get("short_id")    or "").strip()
+
 # ================================================================
 
 R = "\033[0;31m"; G = "\033[0;32m"; Y = "\033[1;33m"
@@ -217,31 +222,39 @@ def main():
 
     priv_key = pub_key = short_id = ""
 
-    if key_client:
-        try:
-            priv_key, pub_key = gen_keys_xray(key_client)
-            if priv_key:
-                info("Ключи получены через xray (remnanode)")
-            else:
-                warn("remnanode не запущен — генерирую через openssl")
-                priv_key, pub_key = gen_keys_openssl(key_client)
-                if priv_key:
-                    info("Ключи сгенерированы через openssl")
-
-            _, short_id = ssh_run(key_client, "openssl rand -hex 4")
-            short_id = short_id.strip()
-        except Exception as exc:
-            warn(f"Ошибка при генерации ключей: {exc}")
-        finally:
+    if PRESET_PRIV and PRESET_PUB:
+        info("Используются ключи из config.yaml")
+        priv_key = PRESET_PRIV
+        pub_key  = PRESET_PUB
+        short_id = PRESET_SID or secrets.token_hex(4)
+        if key_client:
             key_client.close()
+    else:
+        if key_client:
+            try:
+                priv_key, pub_key = gen_keys_xray(key_client)
+                if priv_key:
+                    info("Ключи получены через xray (remnanode)")
+                else:
+                    warn("remnanode не запущен — генерирую через openssl")
+                    priv_key, pub_key = gen_keys_openssl(key_client)
+                    if priv_key:
+                        info("Ключи сгенерированы через openssl")
 
-    if not priv_key:
-        warn("Сгенерируй ключи вручную: docker exec remnanode /usr/local/bin/xray x25519")
-        priv_key = "ВСТАВЬ_PRIVATE_KEY"
-        pub_key  = "ВСТАВЬ_PUBLIC_KEY"
+                _, short_id = ssh_run(key_client, "openssl rand -hex 4")
+                short_id = short_id.strip()
+            except Exception as exc:
+                warn(f"Ошибка при генерации ключей: {exc}")
+            finally:
+                key_client.close()
 
-    if not short_id:
-        short_id = secrets.token_hex(4)
+        if not priv_key:
+            warn("Сгенерируй ключи вручную: docker exec remnanode /usr/local/bin/xray x25519")
+            priv_key = "ВСТАВЬ_PRIVATE_KEY"
+            pub_key  = "ВСТАВЬ_PUBLIC_KEY"
+
+        if not short_id:
+            short_id = secrets.token_hex(4)
 
     # ── Итог ─────────────────────────────────────────────────
     line = "═" * 56
