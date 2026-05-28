@@ -12,6 +12,7 @@ deploy-all.py — Автодеплой REALITY Fallback (Windows / Mac / Linux)
 """
 
 import os
+import re
 import sys
 import secrets
 
@@ -115,10 +116,28 @@ def gen_keys_openssl(client):
     return priv, pub
 
 
-def main():
+def validate_config():
+    if not re.match(r'^[a-zA-Z0-9.\-]+$', SNI_DONOR):
+        error(f"SNI_DONOR содержит недопустимые символы: '{SNI_DONOR}'")
+        sys.exit(1)
+    if not (1 <= FALLBACK_PORT <= 65535):
+        error("FALLBACK_PORT должен быть числом от 1 до 65535")
+        sys.exit(1)
+    if not (1 <= NODE_API_PORT <= 65535):
+        error("NODE_API_PORT должен быть числом от 1 до 65535")
+        sys.exit(1)
     if not NODES:
         error("Список NODES пустой — заполни конфигурацию в начале скрипта")
         sys.exit(1)
+    for node in NODES:
+        for key in ("label", "ip", "user", "password"):
+            if not node.get(key):
+                error(f"В одной из записей NODES не заполнено поле '{key}'")
+                sys.exit(1)
+
+
+def main():
+    validate_config()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     deploy_sh  = os.path.join(script_dir, "deploy.sh")

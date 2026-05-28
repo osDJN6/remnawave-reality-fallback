@@ -22,7 +22,8 @@ OS_ID="${ID:-unknown}"
 OS_VER="${VERSION_ID:-unknown}"
 case "${OS_ID}-${OS_VER}" in
     ubuntu-22.04|ubuntu-24.04|debian-11|debian-12) log_info "ОС: $OS_ID $OS_VER — OK" ;;
-    *) log_error "Неподдерживаемая ОС: $OS_ID $OS_VER"; exit 1 ;;
+    ubuntu-*|debian-*) log_warn "ОС $OS_ID $OS_VER не тестировалась — продолжаем" ;;
+    *) log_error "Неподдерживаемая ОС: $OS_ID $OS_VER (нужен Ubuntu 22/24 или Debian 11/12)"; exit 1 ;;
 esac
 
 # ── Шаг 2: Параметры ─────────────────────────────────────────
@@ -39,7 +40,7 @@ echo -e "  Node API порт: ${GREEN}$NODE_API_PORT${NC}"
 # ── Шаг 3: Установка пакетов ─────────────────────────────────
 log_step "Шаг 3: Пакеты"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -q
+timeout 300 apt-get update -y -q || { log_error "apt-get update завис или вернул ошибку"; exit 1; }
 apt-get install -y -q nginx curl ufw
 log_info "Пакеты установлены"
 

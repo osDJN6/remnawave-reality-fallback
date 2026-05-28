@@ -55,7 +55,25 @@ if ! command -v sshpass &>/dev/null; then
     exit 1
 fi
 
-SSH_OPTS="-o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=15 -o BatchMode=no"
+SSH_OPTS="-o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6"
+
+# ── Валидация конфига ─────────────────────────────────────────
+if [[ ! "$SNI_DONOR" =~ ^[a-zA-Z0-9.\-]+$ ]]; then
+    log_error "SNI_DONOR содержит недопустимые символы: '$SNI_DONOR'"
+    exit 1
+fi
+if [[ ! "$FALLBACK_PORT" =~ ^[0-9]+$ ]] || (( FALLBACK_PORT < 1 || FALLBACK_PORT > 65535 )); then
+    log_error "FALLBACK_PORT должен быть числом 1-65535"
+    exit 1
+fi
+if [[ ! "$NODE_API_PORT" =~ ^[0-9]+$ ]] || (( NODE_API_PORT < 1 || NODE_API_PORT > 65535 )); then
+    log_error "NODE_API_PORT должен быть числом 1-65535"
+    exit 1
+fi
+if [[ ${#NODES[@]} -eq 0 ]]; then
+    log_error "Список NODES пустой — заполни конфигурацию"
+    exit 1
+fi
 
 # Результаты в строке (bash 3.2 совместимо — без declare -A)
 SUMMARY_OK=""
@@ -67,6 +85,11 @@ FIRST_OK_NODE=""
 # ================================================================
 for node_config in "${NODES[@]}"; do
     IFS='|' read -r LABEL IP USER PASS <<< "$node_config"
+
+    if [[ -z "$IP" || -z "$USER" ]]; then
+        log_warn "Пропуск пустой записи в NODES"
+        continue
+    fi
 
     log_step "Нода: $LABEL ($IP)"
 
