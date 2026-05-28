@@ -40,12 +40,11 @@ if sys.platform == "win32":
 
 SNI_DONOR     = "www.microsoft.com"
 FALLBACK_PORT = 8080
-NODE_API_PORT = 3010
+NODE_API_PORT = 2222
 
 # Ноды: label, ip, user, password
 NODES = [
-    {"label": "node1", "ip": "95.85.226.153", "user": "root", "password": "jPaDOVw48d2y"},
-    # {"label": "node2", "ip": "1.2.3.4",       "user": "root", "password": "password"},
+    {"label": "node2", "ip": "89.125.33.47", "user": "root", "password": "a45TOVy0DWJP"},
     # {"label": "node3", "ip": "5.6.7.8",       "user": "root", "password": "password"},
 ]
 

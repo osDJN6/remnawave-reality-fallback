@@ -25,12 +25,11 @@ SNI_DONOR="www.microsoft.com"
 FALLBACK_PORT="8080"
 
 # Порт Remnawave Node API
-NODE_API_PORT="3010"
+NODE_API_PORT="2222"
 
 # Ноды: "метка|IP|пользователь|пароль"
 NODES=(
-    "node1|95.85.226.153|root|jPaDOVw48d2y"
-    # "node2|1.2.3.4|root|password"
+    "node2|89.125.33.47|root|a45TOVy0DWJP"
     # "node3|5.6.7.8|root|password"
 )
 

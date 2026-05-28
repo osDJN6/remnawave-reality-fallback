@@ -17,6 +17,8 @@ REALITY «одалживает» TLS-сертификат Microsoft — ценз
 | L3 (активное зондирование) | Настоящая страница Microsoft (200 OK) |
 | L4 (TLS-анализ) | Валидный сертификат + TLS fingerprint Microsoft |
 
+**→ [Подробное объяснение как это работает](HOW-IT-WORKS.md)**
+
 ---
 
 ## Вариант 1 — Python (Windows / Mac / Linux)
