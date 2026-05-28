@@ -21,37 +21,48 @@ REALITY «одалживает» TLS-сертификат Microsoft — ценз
 
 ---
 
+## Настройка — один файл для обоих вариантов
+
+Скопируй шаблон и заполни своими данными:
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+Открой `config.yaml`:
+
+```yaml
+sni_donor: "www.microsoft.com"   # сайт для маскировки
+fallback_port: 8080               # порт nginx fallback (только localhost)
+node_api_port: 2222               # порт Remnawave Node API
+panel_ip: "1.2.3.4"              # IP панели — Node API открыт только отсюда
+
+nodes:
+  - label: "node1"
+    ip: "1.2.3.4"
+    user: "root"
+    password: "YOUR_PASSWORD"
+  - label: "node2"
+    ip: "5.6.7.8"
+    user: "root"
+    password: "YOUR_PASSWORD"
+```
+
+> `config.yaml` добавлен в `.gitignore` — пароли не попадут в git.
+
+---
+
 ## Вариант 1 — Python (Windows / Mac / Linux)
 
 ### Установка
 
 ```bash
-pip install paramiko
-```
-
-### Настройка
-
-Открой `deploy-all.py` и заполни секцию конфигурации:
-
-```python
-SNI_DONOR     = "www.microsoft.com"   # сайт для маскировки
-FALLBACK_PORT = 8080                  # порт nginx fallback
-NODE_API_PORT = 3010                  # порт Remnawave Node API
-
-NODES = [
-    {"label": "node1", "ip": "1.2.3.4", "user": "root", "password": "password"},
-    {"label": "node2", "ip": "5.6.7.8", "user": "root", "password": "password"},
-]
+pip install paramiko pyyaml
 ```
 
 ### Запуск
 
 ```bash
-python deploy-all.py
-```
-
-На Windows:
-```
 python deploy-all.py
 ```
 
@@ -64,21 +75,6 @@ python deploy-all.py
 ```bash
 brew install sshpass        # Mac
 apt-get install sshpass     # Linux
-```
-
-### Настройка
-
-Открой `deploy-all.sh` и заполни секцию конфигурации:
-
-```bash
-SNI_DONOR="www.microsoft.com"
-FALLBACK_PORT="8080"
-NODE_API_PORT="3010"
-
-NODES=(
-    "node1|1.2.3.4|root|password"
-    "node2|5.6.7.8|root|password"
-)
 ```
 
 ### Запуск

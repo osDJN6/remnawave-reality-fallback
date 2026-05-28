@@ -1,0 +1,7 @@
+# Конфиг с паролями — не коммитить
+config.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/

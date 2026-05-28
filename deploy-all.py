@@ -4,10 +4,10 @@
 deploy-all.py — Автодеплой REALITY Fallback (Windows / Mac / Linux)
 
 Требования:
-    pip install paramiko
+    pip install paramiko pyyaml
 
 Использование:
-    1. Заполни NODES и настройки ниже
+    1. Заполни config.yaml
     2. python deploy-all.py
 """
 
@@ -19,7 +19,13 @@ import secrets
 try:
     import paramiko
 except ImportError:
-    print("Ошибка: установи paramiko командой:  pip install paramiko")
+    print("Ошибка: установи paramiko командой:  pip install paramiko pyyaml")
+    sys.exit(1)
+
+try:
+    import yaml
+except ImportError:
+    print("Ошибка: установи pyyaml командой:  pip install paramiko pyyaml")
     sys.exit(1)
 
 # Устанавливаем UTF-8 для вывода (важно на Windows)
@@ -35,22 +41,22 @@ if sys.platform == "win32":
         pass
 
 # ================================================================
-# КОНФИГУРАЦИЯ — заполни перед запуском
+# Загружаем конфигурацию из config.yaml
 # ================================================================
 
-SNI_DONOR     = "www.microsoft.com"
-FALLBACK_PORT = 8080
-NODE_API_PORT = 2222
+_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+if not os.path.isfile(_cfg_path):
+    print(f"Ошибка: файл конфигурации не найден: {_cfg_path}")
+    sys.exit(1)
 
-# IP панели Remnawave — порт Node API будет открыт ТОЛЬКО с этого IP
-# Оставь "" чтобы не ограничивать (не рекомендуется)
-PANEL_IP      = "1.2.3.4"
+with open(_cfg_path, encoding="utf-8") as _f:
+    _cfg = yaml.safe_load(_f)
 
-# Ноды: label, ip, user, password
-NODES = [
-    {"label": "node1", "ip": "1.2.3.4", "user": "root", "password": "YOUR_PASSWORD"},
-    # {"label": "node2", "ip": "5.6.7.8", "user": "root", "password": "YOUR_PASSWORD"},
-]
+SNI_DONOR     = str(_cfg.get("sni_donor", "www.microsoft.com"))
+FALLBACK_PORT = int(_cfg.get("fallback_port", 8080))
+NODE_API_PORT = int(_cfg.get("node_api_port", 2222))
+PANEL_IP      = str(_cfg.get("panel_ip", ""))
+NODES         = _cfg.get("nodes", [])
 
 # ================================================================
 
@@ -80,11 +86,13 @@ def ssh_run(client, cmd, stream=False):
     out_lines = []
     if stream:
         for raw_line in stdout:
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+            line = line.rstrip("\r\n")
             print(line, flush=True)
             out_lines.append(line)
     else:
-        out_lines = stdout.read().decode("utf-8", errors="replace").splitlines()
+        raw = stdout.read()
+        out_lines = (raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw).splitlines()
 
     exit_code = stdout.channel.recv_exit_status()
     return exit_code, "\n".join(out_lines)

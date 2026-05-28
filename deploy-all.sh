@@ -10,31 +10,38 @@ set -euo pipefail
 #   3. Выводит готовый Config Profile JSON для панели Remnawave
 #
 # Использование:
-#   1. Заполни секцию КОНФИГУРАЦИЯ ниже
+#   1. Заполни config.yaml
 #   2. bash deploy-all.sh
 # ================================================================
 
-# ================================================================
-# КОНФИГУРАЦИЯ — заполни перед запуском
-# ================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/config.yaml"
 
-# SNI-донор: сайт, под который маскируется сервер
-SNI_DONOR="www.microsoft.com"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Ошибка: config.yaml не найден рядом со скриптом"
+    exit 1
+fi
 
-# Порт nginx fallback (Xray перенаправляет сюда зондировщиков)
-FALLBACK_PORT="8080"
+if ! command -v python3 &>/dev/null; then
+    echo "Ошибка: python3 не найден (нужен для чтения config.yaml)"
+    exit 1
+fi
 
-# Порт Remnawave Node API
-NODE_API_PORT="2222"
+# Читаем config.yaml через Python
+_cfg() { python3 -c "import yaml; c=yaml.safe_load(open('$CONFIG_FILE')); print($1)" 2>/dev/null; }
 
-# IP панели Remnawave — порт Node API будет открыт ТОЛЬКО с этого IP
-# Оставь пустым ("") чтобы не ограничивать (не рекомендуется)
-PANEL_IP="1.2.3.4"
+SNI_DONOR=$(   _cfg "c.get('sni_donor','www.microsoft.com')")
+FALLBACK_PORT=$(_cfg "c.get('fallback_port',8080)")
+NODE_API_PORT=$(_cfg "c.get('node_api_port',2222)")
+PANEL_IP=$(    _cfg "c.get('panel_ip','')")
 
-# Ноды: "метка|IP|пользователь|пароль"
-NODES=(
-    "node1|1.2.3.4|root|YOUR_PASSWORD"
-    # "node2|5.6.7.8|root|YOUR_PASSWORD"
+# Читаем ноды из config.yaml
+mapfile -t NODES < <(python3 - <<'PY' "$CONFIG_FILE"
+import yaml, sys
+cfg = yaml.safe_load(open(sys.argv[1]))
+for n in cfg.get('nodes', []):
+    print(f"{n['label']}|{n['ip']}|{n['user']}|{n['password']}")
+PY
 )
 
 # ================================================================

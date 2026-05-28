@@ -1,0 +1,28 @@
+# ================================================================
+# Конфигурация деплоя REALITY Fallback
+# Скопируй этот файл в config.yaml и заполни своими данными:
+#   cp config.yaml.example config.yaml
+# ================================================================
+
+# Сайт-маскировка (SNI донор)
+sni_donor: "www.microsoft.com"
+
+# Порты на ноде
+fallback_port: 8080    # nginx fallback — только localhost, снаружи закрыт
+node_api_port: 2222    # Remnawave Node API
+
+# IP панели Remnawave — порт node_api_port открыт ТОЛЬКО с этого адреса
+# Оставь "" чтобы не ограничивать (не рекомендуется)
+panel_ip: ""
+
+# Список нод для деплоя
+nodes:
+  - label: "node1"
+    ip: "1.2.3.4"
+    user: "root"
+    password: "YOUR_PASSWORD"
+
+  - label: "node2"
+    ip: "5.6.7.8"
+    user: "root"
+    password: "YOUR_PASSWORD"
