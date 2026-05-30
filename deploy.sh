@@ -59,10 +59,11 @@ server {
     listen 127.0.0.1:${FALLBACK_PORT} default_server;
     server_name _;
     server_tokens off;
-    resolver 8.8.8.8 8.8.4.4 ipv6=off;
+    resolver 8.8.8.8 8.8.4.4 ipv6=off valid=60s;
 
     location / {
-        proxy_pass https://${SNI_DONOR};
+        set \$sni_donor "${SNI_DONOR}";
+        proxy_pass https://\$sni_donor;
         proxy_ssl_server_name on;
         proxy_ssl_name ${SNI_DONOR};
         proxy_ssl_verify off;
@@ -89,10 +90,11 @@ server {
     listen 80 default_server;
     server_name _;
     server_tokens off;
-    resolver 8.8.8.8 8.8.4.4 ipv6=off;
+    resolver 8.8.8.8 8.8.4.4 ipv6=off valid=60s;
 
     location / {
-        proxy_pass http://${SNI_DONOR};
+        set \$sni_donor "${SNI_DONOR}";
+        proxy_pass http://\$sni_donor;
         proxy_set_header Host ${SNI_DONOR};
         proxy_set_header User-Agent \$http_user_agent;
         proxy_set_header Accept \$http_accept;
