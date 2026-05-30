@@ -149,6 +149,23 @@ sed -i 's/^Banner .*/Banner none/' "$SSHD_CONF"
 systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
 log_info "SSH: версия ОС в баннере скрыта"
 
+# ── Шаг 5.2: Remnawave Node порт ──────────────────────────────
+if [[ -f /opt/remnanode/.env ]]; then
+    log_step "Шаг 5.2: Remnawave Node NODE_PORT → $NODE_API_PORT"
+    CURRENT_PORT=$(grep -E '^NODE_PORT=' /opt/remnanode/.env | cut -d= -f2 || echo "")
+    if [[ "$CURRENT_PORT" != "$NODE_API_PORT" ]]; then
+        sed -i "s/^NODE_PORT=.*/NODE_PORT=$NODE_API_PORT/" /opt/remnanode/.env
+        log_info "NODE_PORT обновлён: $CURRENT_PORT → $NODE_API_PORT"
+        if command -v docker &>/dev/null && docker ps --filter name=remnanode --format '{{.Names}}' | grep -q remnanode; then
+            cd /opt/remnanode && docker compose down && docker compose up -d
+            cd - >/dev/null
+            log_info "Контейнер remnanode перезапущен"
+        fi
+    else
+        log_info "NODE_PORT уже $NODE_API_PORT"
+    fi
+fi
+
 # ── Шаг 6: Запуск nginx ──────────────────────────────────────
 log_step "Шаг 6: Запуск"
 systemctl restart nginx
