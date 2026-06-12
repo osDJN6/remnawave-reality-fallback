@@ -42,11 +42,12 @@ PANEL_IP="${PANEL_IP:-}"
 ALLOW_NODE_API_PUBLIC="${ALLOW_NODE_API_PUBLIC:-0}"
 
 # Реальный SSH-порт — чтобы не закрыть себе доступ через firewall.
-SSH_PORT="$(grep -E '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -n1)"
+# || true чтобы set -e/pipefail не падали если Port в sshd_config не задан (дефолт 22).
+SSH_PORT="$( { grep -E '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config 2>/dev/null || true; } | awk '{print $2}' | head -n1)"
 SSH_PORT="${SSH_PORT:-22}"
 
 # DNS-резолверы для nginx: системные из /etc/resolv.conf, иначе публичные.
-RESOLVERS="$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | grep -vE '^127\.|^::1' | head -n3 | tr '\n' ' ')"
+RESOLVERS="$( { awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null || true; } | grep -vE '^127\.|^::1' | head -n3 | tr '\n' ' ' || true)"
 [[ -z "${RESOLVERS// }" ]] && RESOLVERS="1.1.1.1 8.8.8.8 9.9.9.9"
 
 echo -e "  SNI-донор:     ${GREEN}$SNI_DONOR${NC}"
