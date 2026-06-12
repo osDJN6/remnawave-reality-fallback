@@ -113,6 +113,11 @@ server {
     access_log off;
     resolver ${RESOLVERS} ipv6=off valid=60s;
 
+    # Server-level дефолт: применяется ко всем ответам, включая ошибки nginx
+    # (405 на TRACE/PUT/DELETE, 400/413/414/494 и т.п.) — иначе ТСПУ ловит
+    # "Server: nginx" одним TRACE-запросом, сигнатура мгновенная.
+    more_set_headers "Server: AkamaiNetStorage";
+
     location / {
         set \$sni_donor "${SNI_DONOR}";
         proxy_pass https://\$sni_donor;
@@ -129,6 +134,7 @@ server {
         # Подлинные заголовки донора (X-MSEdge-Ref, X-Azure-Ref, X-Cache и т.п.) НЕ трогаем.
         proxy_hide_header Via;
         proxy_hide_header X-Powered-By;
+        # Для нормальных проксированных ответов — пробрасываем подлинный Server донора.
         more_set_headers "Server: \$fallback_server";
 
         proxy_connect_timeout 10s;
@@ -144,6 +150,9 @@ ${LISTEN80}
     server_tokens off;
     access_log off;
     resolver ${RESOLVERS} ipv6=off valid=60s;
+
+    # См. комментарий выше — нужен для ошибок nginx (TRACE → 405 и т.п.).
+    more_set_headers "Server: AkamaiNetStorage";
 
     location / {
         set \$sni_donor "${SNI_DONOR}";
