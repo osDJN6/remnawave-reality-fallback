@@ -247,10 +247,14 @@ esac
 
 # 7.2 Доступность донора REALITY (dest на :443) с самого сервера —
 #     это другой слой: именно сюда REALITY уводит зондировщиков без ключа.
-DCODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$SNI_DONOR/" 2>/dev/null || echo "000")"
+# -4: force IPv4 (как nginx с resolver ipv6=off — иначе на хостах с IPv6 DNS
+#     может вернуть AAAA и упасть в таймаут, дав ложно-негативную проверку).
+DCODE="$(curl -s -4 -o /dev/null -w '%{http_code}' --max-time 10 "https://$SNI_DONOR/" 2>/dev/null || echo "000")"
 case "$DCODE" in
-  000) log_warn "Донор $SNI_DONOR:443 недоступен с сервера — REALITY dest может не работать, проверьте сеть/выбор донора" ;;
-  *)   log_info "Донор $SNI_DONOR:443 → $DCODE — доступен" ;;
+  200|201|301|302|307|308)
+    log_info "Донор $SNI_DONOR:443 → $DCODE — доступен" ;;
+  *)
+    log_warn "Донор $SNI_DONOR:443 → $DCODE — недоступен/нестандартный ответ. REALITY dest может не работать." ;;
 esac
 
 # ── Шаг 8: Сводка ────────────────────────────────────────────
