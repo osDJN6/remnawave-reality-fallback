@@ -17,6 +17,7 @@ config.local.json
 *.log
 *.bak
 *.tmp
+deploy.sh.v*.bak
 
 # Python
 __pycache__/
