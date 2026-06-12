@@ -1,5 +1,7 @@
 # Конфиг с паролями — не коммитить
 config.yaml
+REALITY-KEYS.txt
+deploy.sh.v1.bak
 
 # Python
 __pycache__/
