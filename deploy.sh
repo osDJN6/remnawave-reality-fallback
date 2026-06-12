@@ -1,13 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# Remnawave Node — REALITY Fallback + nginx  (v3)
+# Remnawave Node — REALITY Fallback + nginx  (v4)
 # Параметры через env vars:
 #   SNI_DONOR              донор для маскировки            (default: www.microsoft.com)
 #   FALLBACK_PORT          порт nginx-fallback (localhost) (default: 8080)
 #   NODE_API_PORT          порт Remnawave Node API         (default: 3010)
 #   PANEL_IP               IP панели — Node API откроется только ему
 #   ALLOW_NODE_API_PUBLIC  =1 чтобы осознанно открыть Node API всем (если PANEL_IP не задан)
+#   ENABLE_FAIL2BAN        =0 чтобы пропустить установку fail2ban (default: 1)
+#   ENABLE_SYSCTL          =0 чтобы пропустить сетевой тюнинг BBR (default: 1)
+#   ENABLE_CACHE           =0 чтобы пропустить micro-cache донора (default: 1)
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -42,6 +45,9 @@ FALLBACK_PORT="${FALLBACK_PORT:-8080}"
 NODE_API_PORT="${NODE_API_PORT:-3010}"
 PANEL_IP="${PANEL_IP:-}"
 ALLOW_NODE_API_PUBLIC="${ALLOW_NODE_API_PUBLIC:-0}"
+ENABLE_FAIL2BAN="${ENABLE_FAIL2BAN:-1}"
+ENABLE_SYSCTL="${ENABLE_SYSCTL:-1}"
+ENABLE_CACHE="${ENABLE_CACHE:-1}"
 
 # Валидация PANEL_IP (если задан) — простая проверка на IPv4/IPv6-подобный вид.
 if [[ -n "$PANEL_IP" ]]; then
@@ -69,6 +75,9 @@ echo -e "  Node API порт: ${GREEN}$NODE_API_PORT${NC}"
 echo -e "  SSH порт:      ${GREEN}$SSH_PORT${NC}"
 echo -e "  nginx resolver:${GREEN} $RESOLVERS${NC}"
 echo -e "  IPv6:          ${GREEN}$([[ $HAS_IPV6 == 1 ]] && echo "есть — слушаем :80 на v6" || echo "нет")${NC}"
+echo -e "  fail2ban:      ${GREEN}$([[ $ENABLE_FAIL2BAN == 1 ]] && echo "вкл" || echo "выкл")${NC}"
+echo -e "  BBR sysctl:    ${GREEN}$([[ $ENABLE_SYSCTL == 1 ]] && echo "вкл" || echo "выкл")${NC}"
+echo -e "  micro-cache:   ${GREEN}$([[ $ENABLE_CACHE == 1 ]] && echo "вкл" || echo "выкл")${NC}"
 
 if [[ -n "$PANEL_IP" ]]; then
   echo -e "  Panel IP:      ${GREEN}$PANEL_IP${NC} (Node API только с этого IP)"
@@ -84,25 +93,85 @@ fi
 log_step "Шаг 3: Пакеты"
 export DEBIAN_FRONTEND=noninteractive
 timeout 300 apt-get update -y -q || { log_error "apt-get update завис или вернул ошибку"; exit 1; }
-apt-get install -y -q nginx curl ufw iproute2 libnginx-mod-http-headers-more-filter
+PKGS="nginx curl ufw iproute2 libnginx-mod-http-headers-more-filter"
+[[ "$ENABLE_FAIL2BAN" == "1" ]] && PKGS="$PKGS fail2ban"
+apt-get install -y -q $PKGS
 log_info "Пакеты установлены"
+
+# ── Шаг 3.1: Сетевой тюнинг (BBR + fastopen) ─────────────────
+if [[ "$ENABLE_SYSCTL" == "1" ]]; then
+  log_step "Шаг 3.1: Сетевой тюнинг"
+  cat > /etc/sysctl.d/99-remnawave-fallback.conf <<'SYSCTL_EOF'
+# Congestion control + queue discipline
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+# TCP Fast Open (клиент+сервер)
+net.ipv4.tcp_fastopen = 3
+# Меньше задержки/джиттер на хендшейках под нагрузкой
+net.core.somaxconn = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+SYSCTL_EOF
+  if sysctl --system >/dev/null 2>&1; then
+    ACTIVE_CC="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')"
+    log_info "sysctl применён (congestion control: $ACTIVE_CC)"
+    [[ "$ACTIVE_CC" != "bbr" ]] && log_warn "BBR не активировался — возможно, нужен модуль tcp_bbr/перезагрузка"
+  else
+    log_warn "sysctl --system вернул ошибку — пропускаем"
+  fi
+fi
 
 # ── Шаг 4: nginx ─────────────────────────────────────────────
 log_step "Шаг 4: nginx"
 
+# http-контекст: map для Server + (опционально) micro-cache донора и rate-limit зона.
+{
+  cat <<'MAP_EOF'
 # Пробрасываем ПОДЛИННЫЙ Server донора. Если донор Server не прислал —
 # $fallback_server пуст, и more_set_headers с пустым значением УБИРАЕТ заголовок.
 # Так мы не выдумываем неверный Server (это была бы сигнатура) и не светим nginx.
-cat > /etc/nginx/conf.d/00-fallback-map.conf <<MAP_EOF
-map \$upstream_http_server \$fallback_server {
-    default \$upstream_http_server;
+map $upstream_http_server $fallback_server {
+    default $upstream_http_server;
 }
 MAP_EOF
+
+  if [[ "$ENABLE_CACHE" == "1" ]]; then
+    cat <<'CACHE_EOF'
+
+# Короткий кэш ответа донора → ровная латентность и консистентный ответ на пробы/скан.
+proxy_cache_path /var/cache/nginx/fallback levels=1:2 keys_zone=fallback_cache:10m
+                 max_size=128m inactive=120s use_temp_path=off;
+
+# Анти-абьюз для публичного :80 (открытый прокси не должен молотить бесконечно).
+limit_req_zone $binary_remote_addr zone=fallback80:10m rate=20r/s;
+CACHE_EOF
+  fi
+} > /etc/nginx/conf.d/00-fallback-http.conf
+
+# Удаляем старый одиночный map-файл от предыдущих версий, если он остался.
+rm -f /etc/nginx/conf.d/00-fallback-map.conf
+
+if [[ "$ENABLE_CACHE" == "1" ]]; then
+  mkdir -p /var/cache/nginx/fallback
+  chown -R www-data:www-data /var/cache/nginx/fallback 2>/dev/null || true
+fi
 
 # Динамический набор listen-директив для :80 (+ IPv6 при наличии).
 LISTEN80="    listen 80 default_server;"
 [[ $HAS_IPV6 == 1 ]] && LISTEN80="${LISTEN80}
     listen [::]:80 default_server;"
+
+# Опциональные кэш-директивы в location {}.
+CACHE_LOC=""
+CACHE_LOC_80_EXTRA=""
+if [[ "$ENABLE_CACHE" == "1" ]]; then
+  CACHE_LOC=$'        proxy_cache fallback_cache;\n        proxy_cache_methods GET HEAD;\n        proxy_cache_valid 200 301 302 60s;\n        proxy_cache_key "$scheme$host$request_uri";\n        proxy_ignore_headers Set-Cookie Cache-Control Expires;\n        proxy_hide_header Set-Cookie;'
+  # X-Cache-Status только во внутреннем fallback (:8080) — туда ходит лишь Xray,
+  # клиент видит уже расшифрованный поток. На публичном :80 этот заголовок
+  # был бы новой сигнатурой (у Microsoft его нет).
+  CACHE_LOC_80_EXTRA=$'        limit_req zone=fallback80 burst=40 nodelay;'
+fi
 
 cat > /etc/nginx/sites-available/remnawave-fallback <<NGINX_EOF
 # Xray REALITY fallback — принимает расшифрованный HTTP от Xray, отдаёт контент донора.
@@ -130,6 +199,8 @@ server {
         proxy_set_header Accept-Language \$http_accept_language;
         proxy_set_header Accept-Encoding \$http_accept_encoding;
 
+${CACHE_LOC}
+
         # Прячем ТОЛЬКО то, что выдаёт прокси-прослойку.
         # Подлинные заголовки донора (X-MSEdge-Ref, X-Azure-Ref, X-Cache и т.п.) НЕ трогаем.
         proxy_hide_header Via;
@@ -155,12 +226,17 @@ ${LISTEN80}
     more_set_headers "Server: AkamaiNetStorage";
 
     location / {
+${CACHE_LOC_80_EXTRA}
+
         set \$sni_donor "${SNI_DONOR}";
         proxy_pass http://\$sni_donor;
         proxy_set_header Host ${SNI_DONOR};
         proxy_set_header User-Agent \$http_user_agent;
         proxy_set_header Accept \$http_accept;
         proxy_set_header Accept-Language \$http_accept_language;
+
+${CACHE_LOC}
+
         proxy_hide_header Via;
         proxy_hide_header X-Powered-By;
         more_set_headers "Server: \$fallback_server";
@@ -215,9 +291,26 @@ sed -i 's/^[[:space:]]*Banner .*/Banner none/' "$SSHD_CONF"
 systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
 log_info "SSH: суффикс -Debian убран (версия OpenSSH по-прежнему видна)"
 
-# ── Шаг 5.2: Remnawave Node порт ─────────────────────────────
+# ── Шаг 5.2: fail2ban для SSH ────────────────────────────────
+if [[ "$ENABLE_FAIL2BAN" == "1" ]] && command -v fail2ban-server &>/dev/null; then
+    log_step "Шаг 5.2: fail2ban"
+    cat > /etc/fail2ban/jail.d/sshd-remnawave.conf <<F2B_EOF
+[sshd]
+enabled  = true
+port     = ${SSH_PORT}
+backend  = systemd
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+F2B_EOF
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban 2>/dev/null || true
+    log_info "fail2ban: jail sshd на порту $SSH_PORT (5 попыток / 10м → бан 1ч)"
+fi
+
+# ── Шаг 5.3: Remnawave Node порт ─────────────────────────────
 if [[ -f /opt/remnanode/.env ]]; then
-    log_step "Шаг 5.2: Remnawave NODE_PORT → $NODE_API_PORT"
+    log_step "Шаг 5.3: Remnawave NODE_PORT → $NODE_API_PORT"
     cp -a /opt/remnanode/.env "/opt/remnanode/.env.bak.${TS}" && log_info "Бэкап: /opt/remnanode/.env.bak.${TS}"
     CURRENT_PORT="$(grep -E '^NODE_PORT=' /opt/remnanode/.env | cut -d= -f2 || echo "")"
     if [[ "$CURRENT_PORT" != "$NODE_API_PORT" ]]; then
@@ -266,6 +359,14 @@ case "$DCODE" in
     log_warn "Донор $SNI_DONOR:443 → $DCODE — недоступен/нестандартный ответ. REALITY dest может не работать." ;;
 esac
 
+# 7.3 Если кэш включён — прогреем и убедимся что второй запрос идёт из кэша.
+if [[ "$ENABLE_CACHE" == "1" ]]; then
+    curl -s -o /dev/null --connect-timeout 5 --max-time 8 "http://127.0.0.1:$FALLBACK_PORT/" >/dev/null 2>&1 || true
+    HIT="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 8 "http://127.0.0.1:$FALLBACK_PORT/" 2>/dev/null || echo "000")"
+    # Прогрев успешен если второй запрос быстрый и 200. Точный HIT-статус не светим клиенту.
+    [[ "$HIT" == "200" ]] && log_info "micro-cache прогрет (повторный запрос → $HIT)"
+fi
+
 # ── Шаг 8: Сводка ────────────────────────────────────────────
 INFO_DIR="/opt/remnawave-fallback"
 mkdir -p "$INFO_DIR"
@@ -278,6 +379,9 @@ SSH_PORT=$SSH_PORT
 PANEL_IP=${PANEL_IP:-<public>}
 IPV6=$([[ $HAS_IPV6 == 1 ]] && echo yes || echo no)
 RESOLVERS=$RESOLVERS
+ENABLE_FAIL2BAN=$ENABLE_FAIL2BAN
+ENABLE_SYSCTL=$ENABLE_SYSCTL
+ENABLE_CACHE=$ENABLE_CACHE
 INFO_EOF
 log_info "Сводка: $INFO_DIR/install-info.txt"
 log_info "Готово"
