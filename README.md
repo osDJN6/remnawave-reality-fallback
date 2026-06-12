@@ -1,181 +1,175 @@
-# Remnawave REALITY Fallback — автодеплой на несколько нод
+# Remnawave REALITY Fallback
 
-Автоматическая установка nginx-маскировки (REALITY Fallback) на несколько нод Remnawave одной командой.
+Скрипт для маскировки VPN-сервера под настоящий веб-сайт. Защита от активного зондирования ТСПУ и от прямого сканирования IP.
 
-## Как работает
+## Схема
 
 ```
-Входящий трафик → Xray (443, VLESS+REALITY)
-    ├── VPN клиент с правильным ключом → туннель → интернет
-    └── ТСПУ / зондировщик → nginx (8080) → www.microsoft.com
+Клиент → Xray (443, VLESS+REALITY)
+    ├── VPN-клиент (знает ключ)        → туннель → интернет
+    ├── зондировщик без ключа          → REALITY уводит на www.microsoft.com:443 (TLS-слой)
+    └── валидный TLS, но не-VLESS HTTP  → fallback → nginx (8080) → донор
+
+Сканирование порта 80 на IP          → nginx (80) → донор
 ```
 
-REALITY «одалживает» TLS-сертификат Microsoft — цензор видит настоящий сайт.
+**Кто что закрывает:**
 
-| Слой | Что видит цензор |
-|------|-----------------|
-| L3 (активное зондирование) | Настоящая страница Microsoft (200 OK) |
-| L4 (TLS-анализ) | Валидный сертификат + TLS fingerprint Microsoft |
+- **REALITY (TLS-слой).** Зондировщик без приватного ключа не проходит аутентификацию и прозрачно уводится на реальный `www.microsoft.com:443` (поле `realitySettings.dest`). Видит настоящий TLS-сертификат и контент Microsoft. Это основная защита от активного зондирования — её делает сам Xray, без nginx.
+- **nginx fallback (8080).** Подхватывает редкий случай: клиент завершил TLS к нашему серверу, но прислал не-VLESS HTTP. Отдаёт контент донора как обычный обратный прокси.
+- **nginx на :80.** То, что реально видно при сканировании IP по HTTP. Проксирует на донора, чтобы порт 80 выглядел живым и «майкрософтовским».
 
-**→ [Подробное объяснение как это работает](HOW-IT-WORKS.md)**
+## Что защищает
 
----
+|Слой|Атака                           |Защита                                                                 |
+|----|--------------------------------|-----------------------------------------------------------------------|
+|TLS |Активное зондирование без ключа |REALITY уводит на реальный microsoft.com:443, валидный сертификат      |
+|TLS |Поведенческий анализ хендшейка  |TLS fingerprint = настоящий Microsoft (REALITY «занимает» его хендшейк)|
+|HTTP|Прямое сканирование IP (80/8080)|nginx отдаёт контент донора с его подлинными заголовками               |
 
-## Быстрый старт
-
-### 1. Скачай скрипты
-
-```bash
-git clone https://github.com/osDJN6/remnawave-reality-fallback.git
-cd remnawave-reality-fallback
-```
-
-### 2. Создай config.yaml
-
-```bash
-cp config.yaml.example config.yaml
-```
-
-Открой `config.yaml` и заполни:
-
-```yaml
-sni_donor: "www.microsoft.com"   # сайт для маскировки (не менять без причины)
-fallback_port: 8080               # порт nginx fallback — только localhost, снаружи закрыт
-node_api_port: 3000               # порт Remnawave Node API на ноде
-panel_ip: "1.2.3.4"              # IP твоей панели Remnawave (порт API будет открыт только отсюда)
-
-nodes:
-  - label: "node1"
-    ip: "1.2.3.4"      # IP ноды
-    user: "root"        # SSH пользователь
-    password: "..."     # SSH пароль
-
-  - label: "node2"
-    ip: "5.6.7.8"
-    user: "root"
-    password: "..."
-```
-
-> `config.yaml` находится в `.gitignore` — пароли не попадут в репозиторий.
-
-### 3. Запусти деплой
-
-**Python (Windows / Mac / Linux):**
-```bash
-pip install paramiko pyyaml
-python deploy-all.py
-```
-
-**Bash (Mac / Linux):**
-```bash
-brew install sshpass   # Mac
-# apt-get install sshpass  # Linux
-bash deploy-all.sh
-```
-
-### 4. Скопируй вывод в панель
-
-Скрипт выведет:
-- **Config Profile JSON** — вставить в Remnawave: Xray Config → Config Profiles → New
-- **publicKey, shortId** — для настройки хостов
-
----
-
-## Настройка в панели Remnawave
-
-### Config Profile
-
-Перейди в **Xray Config → Config Profiles → New**, вставь JSON из вывода скрипта.
-
-### Hosts
-
-Для каждой ноды перейди в **Hosts → New** и заполни:
-
-| Поле | Значение |
-|------|----------|
-| `address` | IP ноды |
-| `port` | `443` |
-| `security` | `tls` |
-| `sni` | `www.microsoft.com` |
-| `fp` | `firefox` |
-| `publicKey` | из вывода скрипта |
-| `shortId` | из вывода скрипта |
-
-Привяжи все ноды к одному Config Profile.
-
----
-
-## Что делает скрипт на каждой ноде
-
-1. Устанавливает **nginx** с модулем `headers-more`
-2. Настраивает nginx как обратный прокси на `www.microsoft.com`:
-   - порт `8080` — только `127.0.0.1` (недоступен снаружи, только через Xray)
-   - порт `80` — публичный, отдаёт страницу Microsoft
-3. Настраивает **UFW**:
-   - открывает порты `22`, `80`, `443`
-   - порт Node API (`2222`) — только с IP панели
-4. Скрывает **версию ОС** из SSH баннера (`DebianBanner no`)
-5. Генерирует **x25519 ключи** (один раз, для всех нод)
-
----
-
-## Файлы
-
-| Файл | Назначение |
-|------|-----------|
-| `config.yaml` | Твои настройки — заполняешь перед запуском (в .gitignore) |
-| `config.yaml.example` | Шаблон конфига |
-| `deploy-all.py` | Мастер-скрипт Python (Windows / Mac / Linux) |
-| `deploy-all.sh` | Мастер-скрипт Bash (Mac / Linux) |
-| `deploy.sh` | Устанавливается на ноду — вызывается автоматически |
-
----
-
-## Требования к нодам
+## Требования
 
 - Ubuntu 22.04 / 24.04 или Debian 11 / 12
-- SSH root-доступ
-- Порт `443` свободен (не занят другим процессом)
+- Порт 443 свободен (его займёт Xray; скрипт это проверит и предупредит)
+- Remnawave Node (устанавливается отдельно)
 
----
-
-## Рекомендуемые SNI-доноры
-
-| Донор | Надёжность |
-|-------|-----------|
-| `www.microsoft.com` | ✅ Глобальный CDN, работает везде |
-| `github.com` | ✅ Надёжно |
-| Apple-домены | ❌ Собственный ASN — IP-несоответствие видно сразу |
-
----
-
-## Проверка после деплоя
+## Установка
 
 ```bash
-# На ноде — fallback отдаёт Microsoft:
+# Минимум — с привязкой Node API к IP панели (рекомендуется):
+PANEL_IP=203.0.113.10 bash deploy.sh
+
+# Свой донор / порты:
+SNI_DONOR=learn.microsoft.com PANEL_IP=203.0.113.10 bash deploy.sh
+
+# Осознанно открыть Node API всем (если IP панели заранее неизвестен):
+ALLOW_NODE_API_PUBLIC=1 bash deploy.sh
+```
+
+### Переменные окружения
+
+|Переменная             |По умолчанию       |Назначение                                            |
+|-----------------------|-------------------|------------------------------------------------------|
+|`SNI_DONOR`            |`www.microsoft.com`|Домен-донор для маскировки                            |
+|`FALLBACK_PORT`        |`8080`             |Локальный порт nginx-fallback                         |
+|`NODE_API_PORT`        |`3010`             |Порт Remnawave Node API                               |
+|`PANEL_IP`             |—                  |IP панели; Node API откроется только ему              |
+|`ALLOW_NODE_API_PUBLIC`|`0`                |`=1` — открыть Node API всем, если `PANEL_IP` не задан|
+
+
+> Если не задан ни `PANEL_IP`, ни `ALLOW_NODE_API_PUBLIC=1`, скрипт остановится и не станет открывать management-порт ноды наружу.
+
+## Настройка Remnawave
+
+### 1. Config Profile
+
+Создайте Config Profile в панели (замените ключи на свои):
+
+```json
+{
+  "api": { "tag": "api", "services": ["HandlerService", "StatsService", "LoggerService"] },
+  "log": { "loglevel": "warning" },
+  "stats": {},
+  "policy": {
+    "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } },
+    "system": {
+      "statsInboundUplink": true, "statsOutboundUplink": true,
+      "statsInboundDownlink": true, "statsOutboundDownlink": true
+    }
+  },
+  "routing": {
+    "rules": [
+      { "type": "field", "inboundTag": ["api"], "outboundTag": "api" },
+      { "ip": ["geoip:private"], "type": "field", "outboundTag": "blocked" }
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "api", "port": 61000, "listen": "127.0.0.1",
+      "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" }
+    },
+    {
+      "tag": "VLESS-REALITY", "port": 443, "listen": "",
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none",
+        "fallbacks": [{ "dest": 8080, "xver": 0 }]
+      },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "www.microsoft.com:443",
+          "show": false,
+          "xver": 0,
+          "shortIds": ["your-short-id"],
+          "privateKey": "your-private-key",
+          "serverNames": ["www.microsoft.com", "microsoft.com"]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom" },
+    { "tag": "blocked", "protocol": "blackhole" }
+  ]
+}
+```
+
+> `dest` в `realitySettings` (donor на :443) и `fallbacks[].dest` (nginx на 8080) — разные вещи. Первое использует сам REALITY при провале аутентификации; второе — для пост-хендшейк не-VLESS трафика. Совпадение донора в обоих местах желательно для консистентности.
+
+### 2. Host
+
+- **address:** IP сервера
+- **port:** 443
+- **security:** DEFAULT
+- **fingerprint:** chrome
+- **SNI:** [www.microsoft.com](http://www.microsoft.com)
+
+### 3. Генерация ключей REALITY
+
+```bash
+docker exec remnanode /usr/local/bin/xray x25519   # privateKey + publicKey
+openssl rand -hex 4                                  # shortId (8 hex)
+```
+
+- `Private key` → в `privateKey` конфига
+- `Public key` → панель подставит в подписку
+- `shortId` → в массив `shortIds`
+
+> Ключи **не коммитьте** в репозиторий — для этого добавлен `.gitignore`.
+
+## Проверки
+
+```bash
+# Fallback отдаёт контент донора:
 curl http://127.0.0.1:8080/
 
-# Снаружи — имитируем зондировщика (с любой машины):
-curl -sk --resolve www.microsoft.com:443:YOUR_NODE_IP https://www.microsoft.com/ | head -5
+# Зондировщик видит донора по 443:
+curl -k --resolve www.microsoft.com:443:YOUR_SERVER_IP https://www.microsoft.com/
 
-# Проверка сертификата:
-echo | openssl s_client -connect YOUR_NODE_IP:443 -servername www.microsoft.com 2>/dev/null | openssl x509 -noout -subject -issuer
+# Порт 80 выглядит живым:
+curl -I http://YOUR_SERVER_IP/
 ```
 
-Ожидаемый результат:
-- `Server: AkamaiGHost` или `AkamaiNetStorage` — заголовок настоящего Microsoft CDN
-- Сертификат выдан на `CN = www.microsoft.com` от Microsoft Corporation
+## Выбор SNI-донора
 
----
+**Хорошие доноры** (глобальный CDN, IP совпадает с реальными):
 
-## Генерация ключей вручную
+- `www.microsoft.com` — работает почти везде
+- `learn.microsoft.com` — Microsoft Docs
+- `github.com`
 
-Если скрипт не смог сгенерировать ключи автоматически:
+**Плохие доноры:**
 
-```bash
-# На ноде с запущенным Remnawave Node:
-docker exec remnanode /usr/local/bin/xray x25519
+- `icloud.com`, `apple.com` — Apple держит IP в собственных ASN, несоответствие видно сразу
+- Любые сайты без CDN — IP сервера не совпадёт с реальным IP сайта
 
-# shortId:
-openssl rand -hex 4
-```
+## Заметки по безопасности
+
+- **SSH-баннер.** Скрипт убирает суффикс `-Debian`, но **версия OpenSSH всё равно видна** в протокольном баннере — полностью скрыть её без пересборки нельзя. Не рассчитывайте на это как на маскировку.
+- **Node API.** По умолчанию открывается только для `PANEL_IP`. Открытие всем — только явным `ALLOW_NODE_API_PUBLIC=1`.
+- **Firewall.** SSH-порт определяется автоматически из `sshd_config`, чтобы не потерять доступ при включении UFW.
+- **DNS.** nginx-resolver берётся из системного `/etc/resolv.conf`, без жёсткой привязки к одному внешнему DNS.

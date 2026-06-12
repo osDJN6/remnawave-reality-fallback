@@ -1,7 +1,22 @@
-# Конфиг с паролями — не коммитить
-config.yaml
+# Секреты и ключи REALITY — никогда не коммитим
+*.key
+*private*
+*.pem
+*.env
+.env
+keys.txt
+reality-keys.txt
 REALITY-KEYS.txt
-deploy.sh.v1.bak
+
+# Конфиг с паролями нод — не коммитить
+config.yaml
+config.local.json
+*.local.json
+
+# Логи и временное
+*.log
+*.bak
+*.tmp
 
 # Python
 __pycache__/
