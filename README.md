@@ -1,6 +1,8 @@
-# Remnawave REALITY Fallback
+# Remnawave REALITY Fallback (v4)
 
 Скрипт для маскировки VPN-сервера под настоящий веб-сайт. Защита от активного зондирования ТСПУ и от прямого сканирования IP.
+
+**Версия v4** — кроме базовой маскировки добавлены: BBR + TCP Fast Open, micro-cache донора, fail2ban для SSH, rate-limit на публичный :80, бэкапы конфигов, автодетект IPv6, и фиксы маскировки (закрыта утечка `Server: nginx` на нестандартных HTTP-методах). Подробности — в разделе [Что нового в v4](#что-нового-в-v4).
 
 ## Схема
 
@@ -55,6 +57,9 @@ ALLOW_NODE_API_PUBLIC=1 bash deploy.sh
 |`NODE_API_PORT`        |`3010`             |Порт Remnawave Node API                               |
 |`PANEL_IP`             |—                  |IP панели; Node API откроется только ему              |
 |`ALLOW_NODE_API_PUBLIC`|`0`                |`=1` — открыть Node API всем, если `PANEL_IP` не задан|
+|`ENABLE_SYSCTL`        |`1`                |`=0` — пропустить сетевой тюнинг (BBR + TFO)          |
+|`ENABLE_CACHE`         |`1`                |`=0` — пропустить micro-cache донора                  |
+|`ENABLE_FAIL2BAN`      |`1`                |`=0` — пропустить установку fail2ban                  |
 
 
 > Если не задан ни `PANEL_IP`, ни `ALLOW_NODE_API_PUBLIC=1`, скрипт остановится и не станет открывать management-порт ноды наружу.
@@ -173,3 +178,50 @@ curl -I http://YOUR_SERVER_IP/
 - **Node API.** По умолчанию открывается только для `PANEL_IP`. Открытие всем — только явным `ALLOW_NODE_API_PUBLIC=1`.
 - **Firewall.** SSH-порт определяется автоматически из `sshd_config`, чтобы не потерять доступ при включении UFW.
 - **DNS.** nginx-resolver берётся из системного `/etc/resolv.conf`, без жёсткой привязки к одному внешнему DNS.
+- **fail2ban.** По умолчанию настраивает jail для sshd: 5 неудачных попыток за 10 минут → бан на 1 час. Отключается `ENABLE_FAIL2BAN=0`.
+- **SNI mismatch (inherent для REALITY).** На любой SNI сервер всегда отдаёт сертификат `dest` (Microsoft) — это архитектурное свойство REALITY, скриптом не закрывается. См. ограничения ниже.
+
+---
+
+## Что нового в v4
+
+### 🚀 Перформанс
+
+- **BBR congestion control** + `tcp_fastopen` + `qdisc=fq` + увеличенные `somaxconn`/backlog'и. Ровнее латентность под нагрузкой.
+- **Micro-cache донора** (`proxy_cache`, 128 MB, 60s TTL) — повторные пробы получают одинаковый, быстрый ответ. ТСПУ не сможет отличить сервер по «рваным» таймингам.
+
+### 🛡️ Безопасность
+
+- **fail2ban** для SSH: 5 попыток / 10 минут → бан 1 час.
+- **rate-limit на :80** (`limit_req` 20 r/s + burst 40) — публичный fallback не превратится в открытый прокси.
+- **Бэкапы** `/etc/ssh/sshd_config` и `/opt/remnanode/.env` с timestamp перед любым изменением.
+- **Валидация `PANEL_IP`** через regex — опечатку поймаем сразу, не залив непригодное правило в UFW.
+- **install-info.txt** в `/opt/remnawave-fallback/` — сводка параметров установки для аудита.
+
+### 🎭 Маскировочные фиксы
+
+- **Закрыта утечка `Server: nginx`** на нестандартных HTTP-методах (TRACE, PUT, DELETE, PROPFIND, etc.). До v4 один TRACE-запрос мгновенно палил nginx. Теперь `more_set_headers` на уровне `server` подставляет `AkamaiNetStorage` даже для ошибок nginx, которые не доходят до `proxy_pass`.
+- **Пустой `Server` от донора пропускается как есть** — никаких выдуманных `Microsoft-IIS/10.0`. Если у Akamai-edge в этот раз нет `Server` — у нас тоже нет (consistency).
+- **Подлинные заголовки донора пропускаются** (`X-MSEdge-Ref`, `X-Azure-Ref`, `X-Cache` и т.п.). Удаляются только `Via` и `X-Powered-By`, которые однозначно выдают прокси.
+- **`X-Cache-Status` не светим публично** — заголовок добавляется только во внутренний :8080 fallback (туда ходит лишь Xray, клиент видит уже расшифрованный поток).
+
+### 🐛 Стабильность
+
+- **HAS_IPV6 автодетект**: `listen [::]:80` добавляется только если у сервера есть глобальный IPv6 (на v4-only хостах не падаем).
+- **IPv6 resolver fix**: `proxy_pass` через переменную `$sni_donor` чтобы `resolver ... ipv6=off` реально работал. Без этого nginx иногда залипал на IPv6-адресе донора → 502 на HTTP 80.
+- **NODE_PORT auto-sync**: скрипт сам приводит `NODE_PORT` в `/opt/remnanode/.env` к значению из `NODE_API_PORT` и рестартит контейнер.
+- **Проверка донора с `-4`**: `curl -4` чтобы не получить ложно-негативный результат на хостах где systemd-resolved отдаёт AAAA первым.
+- **`|| true` в grep-pipeline** для случая когда в `sshd_config` нет явного `Port` (дефолт 22 в Ubuntu 22.04) — раньше `set -e/pipefail` убивал скрипт на старте.
+
+---
+
+## Известные ограничения (inherent для REALITY-схемы)
+
+Эти утечки не закрываются никаким скриптом — они в архитектуре REALITY:
+
+1. **SNI mismatch.** На любой SNI (`github.com`, `google.com`, etc.) сервер отдаёт сертификат `dest`. У настоящего Microsoft handshake бы failed. Одним `openssl s_client -servername github.com` ТСПУ может это обнаружить. Митигация: использовать REALITY `shortIds` для VPN-аутентификации, при подозрении на массовое сканирование — переходить на xHTTP+CDN.
+2. **`x-edgescape-location` несоответствие.** Akamai в 404-ответе ставит `country_code` клиента. У настоящего Microsoft с RU-IP = `RU`, у нашей ноды (в Лондоне/Амстердаме) = `GB`/`NL`. При коррелированных запросах от ТСПУ — индикатор.
+3. **SSH порт 22 + версия OpenSSH** в баннере. Microsoft не открывает SSH на 22. Типичный VPS-индикатор.
+4. **ASN ≠ Microsoft/Akamai.** Сервер находится у обычного VPS-провайдера, а Microsoft — на AS8068 / Akamai-AS.
+
+Эти индикаторы редко используются ТСПУ массово (требуют active probing), но в комплексе могут привести к таргетированной блокировке.
